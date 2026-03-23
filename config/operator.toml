@@ -1,0 +1,32 @@
+name = "ph0ny-modal-operator-01"
+
+[gateway]
+url = "http://localhost:3100"
+
+[server]
+port = 8080
+host = "0.0.0.0"
+max_concurrency = 10
+timeout_secs = 120
+
+[qos]
+heartbeat_interval_secs = 30
+metrics_interval_secs = 60
+prometheus_port = 9090
+
+# Real Modal endpoint — STT/diarization on A10G GPU
+[[models]]
+name = "whisper-modal"
+type = "stt"
+modal_endpoint = "https://drewstone--phony-voice-voiceservice-web-app.modal.run"
+price_per_1k = 0.006
+health_path = "/health"
+inference_path = "/transcribe"
+
+[[models]]
+name = "pyannote-modal"
+type = "diarize"
+modal_endpoint = "https://drewstone--phony-voice-voiceservice-web-app.modal.run"
+price_per_1k = 0.01
+health_path = "/health"
+inference_path = "/diarize"

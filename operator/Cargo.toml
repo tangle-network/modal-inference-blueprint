@@ -1,0 +1,55 @@
+[package]
+name = "modal-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "modal_inference"
+path = "src/lib.rs"
+
+[[bin]]
+name = "modal-operator"
+path = "src/main.rs"
+
+[dependencies]
+blueprint-sdk = { workspace = true }
+alloy = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-primitives = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# HTTP server
+axum = { workspace = true }
+tower-http = { workspace = true }
+
+# Config
+config = "0.14"
+dotenvy = "0.15"
+toml = "0.8"
+
+# Metrics
+prometheus = { workspace = true }
+
+# Pricing
+rust_decimal = { workspace = true }
+
+# Streaming
+futures-util = { workspace = true }
+tokio-stream = { workspace = true }
+
+# Misc
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+
+[dev-dependencies]
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", branch = "main", features = ["testing", "tangle"] }
+wiremock = "0.6"

@@ -1,0 +1,57 @@
+# Modal Inference Blueprint — Operator Configuration
+#
+# Copy to config/operator.toml and customize.
+
+name = "My Voice Operator"
+
+[gateway]
+url = "https://api.ph0ny.com"
+# api_key = "plabs_..."     # Get from ph0ny.com/keys
+# payout_email = "me@example.com"
+
+[tangle]
+# service_id = 12345
+# blueprint_id = 42
+
+[qos]
+heartbeat_interval_secs = 30
+metrics_interval_secs = 60
+prometheus_port = 9090
+
+[server]
+port = 8080
+host = "0.0.0.0"
+max_concurrency = 10
+timeout_secs = 120
+
+[cost]
+idle_shutdown_minutes = 30   # Stop Modal apps after 30min idle (0 = disabled)
+idle_check_interval_minutes = 5
+
+# ──────────────────────────────────────────────────────────
+# Models — add one [[models]] block per Modal deployment
+# ──────────────────────────────────────────────────────────
+
+[[models]]
+name = "cosyvoice3"
+type = "tts"
+modal_endpoint = "https://your-org--cosyvoice3-service.modal.run"
+price_per_1k = "0.005"
+
+# [[models]]
+# name = "fish-s2-pro"
+# type = "tts"
+# modal_endpoint = "https://your-org--fish-s2-service.modal.run"
+# price_per_1k = "0.008"
+
+# [[models]]
+# name = "pyannote"
+# type = "diarize"
+# modal_endpoint = "https://your-org--pyannote-service.modal.run"
+# price_per_1k = "0.005"
+
+# [[models]]
+# name = "whisper-large-v3"
+# type = "stt"
+# modal_endpoint = "https://your-org--distil-whisper-service.modal.run"
+# price_per_1k = "0.003"
