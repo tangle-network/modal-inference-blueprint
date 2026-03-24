@@ -1,32 +1,42 @@
-name = "ph0ny-modal-operator-01"
+name = "Local Operator — Real Modal"
 
 [gateway]
-url = "http://localhost:3100"
+url = "https://ph0nyvoice-api-production.up.railway.app"
 
-[server]
-port = 8080
-host = "0.0.0.0"
-max_concurrency = 10
-timeout_secs = 120
+[tangle]
+blueprint_id = 1
+rpc_url = "http://localhost:8545"
+operator_key = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+status_registry_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
 
 [qos]
 heartbeat_interval_secs = 30
 metrics_interval_secs = 60
 prometheus_port = 9090
 
-# Real Modal endpoint — STT/diarization on A10G GPU
+[server]
+port = 4200
+host = "0.0.0.0"
+max_concurrency = 10
+timeout_secs = 120
+
+[cost]
+idle_shutdown_minutes = 30
+idle_check_interval_minutes = 5
+
+# Real Modal deployments
 [[models]]
 name = "whisper-modal"
 type = "stt"
 modal_endpoint = "https://drewstone--phony-voice-voiceservice-web-app.modal.run"
-price_per_1k = 0.006
+price_per_1k = "0.006"
 health_path = "/health"
 inference_path = "/transcribe"
 
 [[models]]
-name = "pyannote-modal"
-type = "diarize"
-modal_endpoint = "https://drewstone--phony-voice-voiceservice-web-app.modal.run"
-price_per_1k = 0.01
+name = "chatterbox-tts"
+type = "tts"
+modal_endpoint = "https://drewstone--phony-chatterbox-tts-chatterboxservice-web-app.modal.run"
+price_per_1k = "0.008"
 health_path = "/health"
-inference_path = "/diarize"
+inference_path = "/synthesize"
