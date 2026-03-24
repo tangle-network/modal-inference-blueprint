@@ -59,7 +59,7 @@ pub struct OperatorConfig {
     /// Operator display name
     pub name: String,
 
-    /// ph0ny marketplace registration
+    /// Tangle marketplace registration
     #[serde(default)]
     pub gateway: GatewayConfig,
 
@@ -109,11 +109,11 @@ fn default_idle_check() -> u64 { 5 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GatewayConfig {
-    /// ph0ny marketplace API URL
+    /// Tangle marketplace API URL
     #[serde(default = "default_gateway_url")]
     pub url: String,
 
-    /// API key for marketplace registration (obtained from ph0ny.com)
+    /// API key for marketplace registration (obtained from marketplace)
     #[serde(default)]
     pub api_key: Option<String>,
 
@@ -127,7 +127,7 @@ pub struct GatewayConfig {
 }
 
 fn default_gateway_url() -> String {
-    "https://api.ph0ny.com".to_string()
+    "https://api.marketplace".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

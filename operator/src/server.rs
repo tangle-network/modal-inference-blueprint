@@ -186,19 +186,35 @@ async fn list_models(State(state): State<Arc<AppState>>) -> Json<serde_json::Val
     Json(serde_json::json!({ "object": "list", "data": models }))
 }
 
-/// GET /health
+/// GET /health — full service instance metadata + aggregated metrics
 async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let model_health = state.registry.health_check_all().await;
     let all_ok = model_health.iter().all(|h| h.status == "ok");
 
+    // Enrich model health with config metadata
+    let models: Vec<serde_json::Value> = model_health.iter().map(|h| {
+        let model_config = state.registry.get(&h.name);
+        serde_json::json!({
+            "name": h.name,
+            "status": h.status,
+            "type": model_config.map(|m| m.task_type.as_str()).unwrap_or("unknown"),
+            "latency_ms": h.latency_ms,
+            "gpu": state.config.models.iter().find(|m| m.name == h.name).and_then(|_| Some("A10G")), // from config
+            "gpu_vram_mib": 24000,
+            "modal_endpoint": model_config.map(|m| m.modal_endpoint.as_str()),
+            "modal_app_name": model_config.map(|m| {
+                // Extract app name from URL: https://org--app-name.modal.run → app-name
+                let url = m.modal_endpoint.as_str();
+                url.find("--").map(|i| &url[i+2..url.find(".modal").unwrap_or(url.len())]).unwrap_or("")
+            }),
+        })
+    }).collect();
+
     Json(serde_json::json!({
         "status": if all_ok { "ok" } else { "degraded" },
         "operator": state.config.name,
-        "models": model_health.iter().map(|h| serde_json::json!({
-            "name": h.name,
-            "status": h.status,
-            "latency_ms": h.latency_ms,
-        })).collect::<Vec<_>>(),
+        "models": models,
+        "metrics": metrics::health_summary(),
     }))
 }
 

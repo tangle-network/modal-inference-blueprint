@@ -1,11 +1,11 @@
 //! modal-inference-blueprint — Tangle Blueprint for serving voice AI models via Modal.
 //!
-//! Operators deploy Modal apps (any of the 32 ph0ny voice model scripts),
+//! Operators deploy Modal apps (any of the 32 voice model scripts),
 //! then run this blueprint which provides:
 //! - Tangle registration + heartbeat
 //! - OpenAI-compatible HTTP proxy
 //! - Prometheus metrics + on-chain metric submission
-//! - Auto-registration with ph0ny marketplace
+//! - Auto-registration with Tangle marketplace
 //! - Billing via x402/ShieldedCredits
 //!
 //! The blueprint doesn't run models — it proxies to Modal deployments.

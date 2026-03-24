@@ -3,7 +3,7 @@
 //! This is the binary that operators run. It:
 //! 1. Loads config (which Modal endpoints to proxy)
 //! 2. Loads Tangle environment
-//! 3. Registers with ph0ny marketplace
+//! 3. Registers with Tangle marketplace
 //! 4. Starts the BlueprintRunner with:
 //!    - Job router (for on-chain inference jobs)
 //!    - Tangle producer/consumer (for chain events)
@@ -55,7 +55,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         );
     }
 
-    // Register with ph0ny marketplace (best-effort, non-fatal)
+    // Register with Tangle marketplace (best-effort, non-fatal)
     if let Err(e) = register_with_gateway(&config).await {
         tracing::warn!(error = %e, "Marketplace registration failed (operating standalone)");
     }
