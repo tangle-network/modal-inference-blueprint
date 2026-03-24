@@ -14,6 +14,7 @@ pub mod config;
 pub mod idle;
 pub mod metrics;
 pub mod proxy;
+pub mod qos;
 pub mod registry;
 pub mod server;
 
