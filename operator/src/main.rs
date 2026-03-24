@@ -66,11 +66,13 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         let metrics_source = Arc::new(OperatorMetricsSource) as Arc<dyn blueprint_qos::heartbeat::MetricsSource>;
         let heartbeat_consumer = Arc::new(TangleHeartbeatConsumer);
 
+        let registry_addr = config.tangle.status_registry_address.parse().unwrap_or_default();
+
         let heartbeat_ctx = blueprint_qos::HeartbeatContext {
             consumer: heartbeat_consumer,
             http_rpc_endpoint: config.tangle.rpc_url.clone(),
             keystore_uri: config.tangle.operator_key.clone(),
-            status_registry_address: config.tangle.tangle_core.parse().unwrap_or_default(),
+            status_registry_address: registry_addr,
             dry_run: false,
             metrics_source: Some(metrics_source),
         };
@@ -82,7 +84,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                 service_id,
                 blueprint_id: config.tangle.blueprint_id,
                 max_missed_heartbeats: 5,
-                status_registry_address: config.tangle.tangle_core.parse().unwrap_or_default(),
+                status_registry_address: registry_addr,
             }),
             ..Default::default()
         };

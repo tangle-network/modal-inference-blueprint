@@ -133,7 +133,13 @@ fn default_gateway_url() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TangleConfig {
     pub service_id: Option<u64>,
-    pub blueprint_id: Option<u64>,
+    pub blueprint_id: u64,
+    #[serde(default)]
+    pub rpc_url: String,
+    #[serde(default)]
+    pub operator_key: String,
+    #[serde(default)]
+    pub status_registry_address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
