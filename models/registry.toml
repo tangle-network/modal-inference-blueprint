@@ -1,0 +1,1503 @@
+# Model Registry — Definitive catalog for Modal-based inference deployment.
+#
+# Each [[models]] entry describes a model, its resource requirements, pricing,
+# and the inference engine + endpoint shape needed to serve it on Modal GPUs.
+#
+# Fields:
+#   model_id              — HuggingFace repo or canonical identifier
+#   name                  — Short slug used in operator config and routing
+#   task_type             — text-generation | image-generation | video-generation | video-avatar | video-lipsync | video-stitch | video-understanding | tts | stt | music-generation
+#   gpu_type              — Modal GPU class: "H100" | "A100-80GB" | "A100-40GB" | "A10G" | "L40S" | "L4" | "T4"
+#   gpu_count             — Number of GPUs per replica
+#   vram_required_mib     — Minimum VRAM to load model weights + KV cache / activations
+#   recommended_tp        — Tensor-parallel degree (must be <= gpu_count)
+#   modal_image           — Base container image tag
+#   inference_engine      — "vllm" | "sglang" | "diffusers" | "transformers" | "whisper" | "custom"
+#   endpoint_path         — Default inference endpoint path
+#   context_length        — Max context window (text models only)
+#   estimated_latency_ms  — p50 latency for a typical request
+#   price_per_m_tokens    — USD per 1M tokens (text models)
+#   price_per_image       — USD per image (image models)
+#   price_per_second      — USD per second of generated media (audio/video)
+#   notes                 — Deployment-specific caveats
+
+# =============================================================================
+# TEXT LLM MODELS — served via vLLM / SGLang on Modal
+# =============================================================================
+
+# --- Meta Llama 4 family ---
+
+[[models]]
+model_id = "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
+name = "llama-4-maverick"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 4
+vram_required_mib = 280000
+recommended_tp = 4
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 1048576
+estimated_latency_ms = 800
+price_per_m_tokens = 0.60
+notes = "17B active params, 128 experts MoE. FP8 weights require 4xH100. Use --enable-expert-parallel for best throughput."
+
+[[models]]
+model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+name = "llama-4-scout"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 120000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 1048576
+estimated_latency_ms = 500
+price_per_m_tokens = 0.30
+notes = "17B active, 16 experts MoE. 10M token context with FP8 quantization on 2xH100."
+
+[[models]]
+model_id = "meta-llama/Llama-3.3-70B-Instruct"
+name = "llama-3.3-70b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 140000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 600
+price_per_m_tokens = 0.40
+notes = "Dense 70B. Still the best dense Llama for code and reasoning. FP8 on 2xH100."
+
+[[models]]
+model_id = "meta-llama/Llama-3.1-8B-Instruct"
+name = "llama-3.1-8b"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 18000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 200
+price_per_m_tokens = 0.08
+notes = "Cheap workhorse for simple tasks. Fits on A10G with FP16."
+
+# --- DeepSeek ---
+
+[[models]]
+model_id = "deepseek-ai/DeepSeek-V3-0324"
+name = "deepseek-v3"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 8
+vram_required_mib = 640000
+recommended_tp = 8
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 1200
+price_per_m_tokens = 0.80
+notes = "685B MoE (37B active). FP8 on 8xH100. Use --enable-expert-parallel. Top-tier coding/reasoning."
+
+[[models]]
+model_id = "deepseek-ai/DeepSeek-R1"
+name = "deepseek-r1"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 8
+vram_required_mib = 640000
+recommended_tp = 8
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 2000
+price_per_m_tokens = 1.00
+notes = "685B MoE reasoning model. Long chain-of-thought outputs. Same infra as V3."
+
+[[models]]
+model_id = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+name = "deepseek-r1-32b"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 68000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 600
+price_per_m_tokens = 0.25
+notes = "Best cost/performance reasoning model. Single A100-80GB with FP16."
+
+[[models]]
+model_id = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+name = "deepseek-r1-8b"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 18000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 250
+price_per_m_tokens = 0.08
+notes = "Cheap reasoning distill. Fits A10G."
+
+# --- Qwen 3 family ---
+
+[[models]]
+model_id = "Qwen/Qwen3-235B-A22B"
+name = "qwen3-235b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 4
+vram_required_mib = 280000
+recommended_tp = 4
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 700
+price_per_m_tokens = 0.50
+notes = "235B MoE (22B active). Frontier-class multilingual. FP8 on 4xH100."
+
+[[models]]
+model_id = "Qwen/Qwen3-72B"
+name = "qwen3-72b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 150000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 600
+price_per_m_tokens = 0.40
+notes = "Dense 72B. Strong all-around, especially multilingual."
+
+[[models]]
+model_id = "Qwen/Qwen3-32B"
+name = "qwen3-32b"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 68000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 400
+price_per_m_tokens = 0.20
+notes = "Sweet spot for single-GPU quality. FP16 on A100-80GB."
+
+[[models]]
+model_id = "Qwen/Qwen3-8B"
+name = "qwen3-8b"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 18000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 180
+price_per_m_tokens = 0.06
+notes = "Best small model for tool use and structured output."
+
+[[models]]
+model_id = "Qwen/Qwen3-4B"
+name = "qwen3-4b"
+task_type = "text-generation"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 9000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 150
+price_per_m_tokens = 0.04
+notes = "Ultra-cheap. T4 deployable. Good for classification and extraction."
+
+[[models]]
+model_id = "Qwen/Qwen3-Coder-32B"
+name = "qwen3-coder-32b"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 68000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 400
+price_per_m_tokens = 0.20
+notes = "Code-specialized Qwen3. Top-tier open code model."
+
+[[models]]
+model_id = "Qwen/Qwen3-Coder-8B"
+name = "qwen3-coder-8b"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 18000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 180
+price_per_m_tokens = 0.06
+notes = "Compact code model. FIM support."
+
+# --- Qwen 2.5 (still widely deployed) ---
+
+[[models]]
+model_id = "Qwen/QwQ-32B"
+name = "qwq-32b"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 68000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 500
+price_per_m_tokens = 0.20
+notes = "Reasoning-focused 32B. Extended thinking with /think tags."
+
+# --- Mistral ---
+
+[[models]]
+model_id = "mistralai/Mistral-Large-Instruct-2411"
+name = "mistral-large"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 140000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 600
+price_per_m_tokens = 0.40
+notes = "123B dense. Strong multilingual + function calling."
+
+[[models]]
+model_id = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+name = "mistral-small-3.1"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 52000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 350
+price_per_m_tokens = 0.15
+notes = "24B with vision. Excellent efficiency for its class."
+
+[[models]]
+model_id = "mistralai/Mixtral-8x22B-Instruct-v0.1"
+name = "mixtral-8x22b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 140000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 65536
+estimated_latency_ms = 500
+price_per_m_tokens = 0.35
+notes = "176B MoE. Still cost-effective for batch workloads."
+
+[[models]]
+model_id = "mistralai/Codestral-2501"
+name = "codestral"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 48000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 262144
+estimated_latency_ms = 300
+price_per_m_tokens = 0.15
+notes = "22B code-specialized. 256K context. FIM support."
+
+# --- Google Gemma ---
+
+[[models]]
+model_id = "google/gemma-3-27b-it"
+name = "gemma-3-27b"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 58000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 350
+price_per_m_tokens = 0.18
+notes = "27B with multimodal support. Strong for its size."
+
+[[models]]
+model_id = "google/gemma-3-12b-it"
+name = "gemma-3-12b"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 26000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 250
+price_per_m_tokens = 0.10
+notes = "12B. Fits A10G with INT8. Good quality/cost ratio."
+
+[[models]]
+model_id = "google/gemma-3-4b-it"
+name = "gemma-3-4b"
+task_type = "text-generation"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 9000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 140
+price_per_m_tokens = 0.04
+notes = "Tiny Gemma. T4 deployable."
+
+# --- Microsoft Phi ---
+
+[[models]]
+model_id = "microsoft/Phi-4"
+name = "phi-4"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 30000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 16384
+estimated_latency_ms = 200
+price_per_m_tokens = 0.08
+notes = "14B dense. Strong math/reasoning for size. A10G with INT8."
+
+[[models]]
+model_id = "microsoft/Phi-4-mini-instruct"
+name = "phi-4-mini"
+task_type = "text-generation"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 8000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 120
+price_per_m_tokens = 0.03
+notes = "3.8B. 128K context. Cheapest reasonable model."
+
+# --- Cohere Command R ---
+
+[[models]]
+model_id = "CohereForAI/c4ai-command-r-plus-08-2024"
+name = "command-r-plus"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 140000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 700
+price_per_m_tokens = 0.45
+notes = "104B. Excellent RAG grounded generation. Strong multilingual."
+
+[[models]]
+model_id = "CohereForAI/c4ai-command-r-08-2024"
+name = "command-r"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 70000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 400
+price_per_m_tokens = 0.20
+notes = "35B. RAG-optimized with citation generation."
+
+# --- NVIDIA Nemotron ---
+
+[[models]]
+model_id = "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+name = "nemotron-70b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 140000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 600
+price_per_m_tokens = 0.40
+notes = "RLHF-tuned Llama 70B. Highest reward model scores in class."
+
+# --- Nous Research ---
+
+[[models]]
+model_id = "NousResearch/Hermes-3-Llama-3.1-70B"
+name = "hermes-3-70b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 140000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 600
+price_per_m_tokens = 0.40
+notes = "Best open function-calling model. JSON mode + tool use."
+
+# --- Yi / 01.AI ---
+
+[[models]]
+model_id = "01-ai/Yi-1.5-34B-Chat"
+name = "yi-34b"
+task_type = "text-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 72000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 4096
+estimated_latency_ms = 400
+price_per_m_tokens = 0.20
+notes = "34B bilingual EN/ZH. Good for Chinese content."
+
+# --- Embedding models ---
+
+[[models]]
+model_id = "BAAI/bge-en-icl"
+name = "bge-en-icl"
+task_type = "embedding"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 8000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/embeddings"
+context_length = 32768
+estimated_latency_ms = 50
+price_per_m_tokens = 0.01
+notes = "SOTA open embedding model. 7B param, in-context learning for domain adaptation."
+
+[[models]]
+model_id = "Alibaba-NLP/gte-Qwen2-7B-instruct"
+name = "gte-qwen2-7b"
+task_type = "embedding"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/embeddings"
+context_length = 32768
+estimated_latency_ms = 40
+price_per_m_tokens = 0.01
+notes = "7B embedding model. Strong multilingual retrieval."
+
+# =============================================================================
+# IMAGE GENERATION MODELS — served via Diffusers on Modal
+# =============================================================================
+
+# --- Black Forest Labs FLUX ---
+
+[[models]]
+model_id = "black-forest-labs/FLUX.1-dev"
+name = "flux-1-dev"
+task_type = "image-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 48000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 8000
+price_per_image = 0.03
+notes = "12B rectified flow transformer. Best open image model. 28 steps default."
+
+[[models]]
+model_id = "black-forest-labs/FLUX.1-schnell"
+name = "flux-1-schnell"
+task_type = "image-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 2000
+price_per_image = 0.005
+notes = "Distilled FLUX. 4 steps. A10G viable with FP16. Fastest quality/speed."
+
+[[models]]
+model_id = "black-forest-labs/FLUX.1-Fill-dev"
+name = "flux-1-fill"
+task_type = "image-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 48000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/edits"
+estimated_latency_ms = 10000
+price_per_image = 0.04
+notes = "Inpainting/outpainting variant of FLUX.1."
+
+[[models]]
+model_id = "black-forest-labs/FLUX.1-Redux-dev"
+name = "flux-1-redux"
+task_type = "image-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 48000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/variations"
+estimated_latency_ms = 9000
+price_per_image = 0.04
+notes = "Image variation / style transfer FLUX adapter."
+
+# --- Stability AI ---
+
+[[models]]
+model_id = "stabilityai/stable-diffusion-3.5-large"
+name = "sd3.5-large"
+task_type = "image-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 32000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 6000
+price_per_image = 0.02
+notes = "8B MMDiT. Good prompt adherence, flexible aspect ratios."
+
+[[models]]
+model_id = "stabilityai/stable-diffusion-3.5-large-turbo"
+name = "sd3.5-turbo"
+task_type = "image-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 20000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 2500
+price_per_image = 0.008
+notes = "Distilled SD3.5. 4 steps. A10G viable."
+
+[[models]]
+model_id = "stabilityai/sdxl-turbo"
+name = "sdxl-turbo"
+task_type = "image-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 10000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 800
+price_per_image = 0.003
+notes = "1 step. Sub-second. Best for real-time/interactive use."
+
+[[models]]
+model_id = "stabilityai/stable-diffusion-xl-base-1.0"
+name = "sdxl"
+task_type = "image-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 12000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 4000
+price_per_image = 0.01
+notes = "Mature ecosystem. Massive LoRA/ControlNet library."
+
+# --- Playground ---
+
+[[models]]
+model_id = "playgroundai/playground-v3-1024"
+name = "playground-v3"
+task_type = "image-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 40000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 7000
+price_per_image = 0.025
+notes = "Aesthetics-focused. Strong on photorealism and design."
+
+# --- PixArt ---
+
+[[models]]
+model_id = "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
+name = "pixart-sigma"
+task_type = "image-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 3000
+price_per_image = 0.008
+notes = "600M DiT. Very efficient. Good for batch generation."
+
+# --- Kolors (Kwai) ---
+
+[[models]]
+model_id = "Kwai-Kolors/Kolors"
+name = "kolors"
+task_type = "image-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 20000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 5000
+price_per_image = 0.012
+notes = "Chinese aesthetic. Strong on CJK text rendering in images."
+
+# --- Hunyuan ---
+
+[[models]]
+model_id = "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers"
+name = "hunyuan-dit"
+task_type = "image-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 32000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/images/generations"
+estimated_latency_ms = 8000
+price_per_image = 0.025
+notes = "Bilingual DiT. Handles EN/ZH prompts natively."
+
+# =============================================================================
+# VIDEO GENERATION MODELS
+# =============================================================================
+
+[[models]]
+model_id = "Wan-AI/Wan2.1-T2V-14B"
+name = "wan2.1-t2v-14b"
+task_type = "video-generation"
+gpu_type = "H100"
+gpu_count = 1
+vram_required_mib = 60000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 120000
+price_per_second = 0.10
+notes = "14B DiT video. 480p 5s clips. FP16 on single H100. Best open video model."
+
+[[models]]
+model_id = "Wan-AI/Wan2.1-T2V-1.3B"
+name = "wan2.1-t2v-1.3b"
+task_type = "video-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 20000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 60000
+price_per_second = 0.03
+notes = "1.3B lightweight video. 480p. A10G viable."
+
+[[models]]
+model_id = "Wan-AI/Wan2.1-I2V-14B-720P"
+name = "wan2.1-i2v-14b"
+task_type = "video-generation"
+gpu_type = "H100"
+gpu_count = 1
+vram_required_mib = 60000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 150000
+price_per_second = 0.12
+notes = "Image-to-video. 720p. Accepts reference frame."
+
+[[models]]
+model_id = "THUDM/CogVideoX-5b"
+name = "cogvideox-5b"
+task_type = "video-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 40000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 180000
+price_per_second = 0.08
+notes = "5B 3D-VAE video model. 6s 720p clips. 50 diffusion steps."
+
+[[models]]
+model_id = "genmo/mochi-1-preview"
+name = "mochi-1"
+task_type = "video-generation"
+gpu_type = "H100"
+gpu_count = 1
+vram_required_mib = 60000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 90000
+price_per_second = 0.08
+notes = "Asymmetric DiT. Smooth motion. Requires custom inference pipeline."
+
+[[models]]
+model_id = "Lightricks/LTX-Video"
+name = "ltx-video"
+task_type = "video-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 32000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 60000
+price_per_second = 0.05
+notes = "Lightweight video DiT. Fast generation, good for iteration."
+
+[[models]]
+model_id = "tencent/HunyuanVideo"
+name = "hunyuan-video"
+task_type = "video-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 120000
+recommended_tp = 2
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 200000
+price_per_second = 0.15
+notes = "13B video model. 720p. High quality but resource intensive."
+
+[[models]]
+model_id = "THUDM/CogVideoX-2b"
+name = "cogvideox-2b"
+task_type = "video-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 12000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 120000
+price_per_second = 0.03
+notes = "Lightweight 2B video. Apache 2.0. Runs on free Colab. FP16."
+
+[[models]]
+model_id = "guoyww/animatediff-motion-adapter-v1-5-3"
+name = "animatediff"
+task_type = "video-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 60000
+price_per_second = 0.02
+notes = "Stylized/animated video. MIT. ControlNet + SparseCtrl support."
+
+[[models]]
+model_id = "sand-ai/MAGI-1"
+name = "magi-1"
+task_type = "video-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 48000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 90000
+price_per_second = 0.08
+notes = "Autoregressive denoising. Chunk-by-chunk streaming generation. Apache 2.0. 24B full / 4.5B distilled."
+
+[[models]]
+model_id = "Skywork/SkyReels-V1-Hunyuan-I2V"
+name = "skyreels-v1"
+task_type = "video-generation"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/videos/generations"
+estimated_latency_ms = 150000
+price_per_second = 0.10
+notes = "Cinematic quality I2V. Film/TV trained. Excellent character consistency."
+
+# =============================================================================
+# VIDEO UNDERSTANDING / VISION-LANGUAGE MODELS
+# =============================================================================
+
+[[models]]
+model_id = "OpenGVLab/InternVideo2_5_Chat_8B"
+name = "internvideo2.5"
+task_type = "video-understanding"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/video/analyze"
+estimated_latency_ms = 30000
+price_per_second = 0.01
+notes = "SOTA video understanding. 10K-frame support. Long & Rich Context modeling. Jan 2025."
+
+[[models]]
+model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
+name = "qwen2.5-vl-7b"
+task_type = "video-understanding"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/video/analyze"
+estimated_latency_ms = 20000
+price_per_second = 0.008
+notes = "1hr+ video support. Event pinpointing. Dynamic FPS sampling. Qwen license."
+
+[[models]]
+model_id = "Qwen/Qwen3-VL-8B-Instruct"
+name = "qwen3-vl-8b"
+task_type = "video-understanding"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 20000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/video/analyze"
+estimated_latency_ms = 20000
+price_per_second = 0.008
+notes = "Most powerful open VLM. Extended context. Agent interaction. Qwen license."
+
+[[models]]
+model_id = "OpenGVLab/VideoChat-Flash-Qwen2_5-7B"
+name = "videochat-flash"
+task_type = "video-understanding"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 12000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/video/analyze"
+estimated_latency_ms = 15000
+price_per_second = 0.005
+notes = "ICLR 2026. Hierarchical compression for long-context. Efficient on A10G."
+
+# =============================================================================
+# VIDEO AVATAR / LIPSYNC / STITCH MODELS — served via custom pipelines
+# =============================================================================
+
+[[models]]
+model_id = "fudan-generative-ai/hallo3"
+name = "hallo3"
+task_type = "video-avatar"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/generate"
+estimated_latency_ms = 60000
+price_per_second = 0.04
+notes = "Talking head avatar. Image + audio → video. Diffusion-based face animation."
+
+[[models]]
+model_id = "KwaiVGI/LivePortrait"
+name = "liveportrait"
+task_type = "video-avatar"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/generate"
+estimated_latency_ms = 30000
+price_per_second = 0.02
+notes = "Real-time avatar. Supports streaming (30fps) and batch. ONNX runtime."
+
+[[models]]
+model_id = "bytedance/LatentSync"
+name = "latentsync"
+task_type = "video-lipsync"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 20000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/lipsync"
+estimated_latency_ms = 90000
+price_per_second = 0.04
+notes = "Lip sync. Video + audio → lip-synced video. Latent diffusion on face region."
+
+[[models]]
+model_id = "BadToBest/EchoMimicV2"
+name = "echomimicv2"
+task_type = "video-avatar"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/generate"
+estimated_latency_ms = 90000
+price_per_second = 0.04
+notes = "Half-body avatar with hand gestures. Audio-driven, editable landmark conditioning. AAAI 2025."
+
+[[models]]
+model_id = "tencent/V-Express"
+name = "v-express"
+task_type = "video-avatar"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 20000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/generate"
+estimated_latency_ms = 90000
+price_per_second = 0.04
+notes = "Strong identity preservation. Multi-modal control (audio/text/visual). Tencent."
+
+[[models]]
+model_id = "Skywork/SkyReels-A1"
+name = "skyreels-a1"
+task_type = "video-avatar"
+gpu_type = "A100-40GB"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/generate"
+estimated_latency_ms = 60000
+price_per_second = 0.03
+notes = "33 facial expressions, 400+ movement combos. Cinematic-quality portrait animation."
+
+[[models]]
+model_id = "OpenTalking/video-retalking"
+name = "video-retalking"
+task_type = "video-lipsync"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 12000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/lipsync"
+estimated_latency_ms = 30000
+price_per_second = 0.02
+notes = "Near real-time lip sync. Smooth face boundaries. Reliable for professional dubbing."
+
+[[models]]
+model_id = "TMElyralab/MuseTalk"
+name = "musetalk"
+task_type = "video-lipsync"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/lipsync"
+estimated_latency_ms = 15000
+price_per_second = 0.01
+notes = "Real-time lip sync. MIT license. 4GB VRAM. v1.5: enhanced clarity + identity consistency."
+
+[[models]]
+model_id = "ffmpeg"
+name = "video-stitch"
+task_type = "video-stitch"
+gpu_type = "T4"
+gpu_count = 0
+vram_required_mib = 0
+recommended_tp = 1
+modal_image = "debian:bookworm-slim"
+inference_engine = "custom"
+endpoint_path = "/stitch"
+estimated_latency_ms = 30000
+price_per_second = 0.005
+notes = "CPU-only. Concatenates videos with cut/fade/dissolve transitions via ffmpeg xfade."
+
+# =============================================================================
+# TEXT-TO-SPEECH (TTS) MODELS
+# =============================================================================
+
+[[models]]
+model_id = "Qwen/Qwen3-TTS"
+name = "qwen3-tts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 3000
+price_per_second = 0.002
+notes = "LLM-based TTS. Natural prosody, multilingual. Streaming capable."
+
+[[models]]
+model_id = "hexgrad/Kokoro-82M"
+name = "kokoro-tts"
+task_type = "tts"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 500
+price_per_second = 0.0005
+notes = "82M params. Sub-second latency. T4 deployable. StyleTTS2 architecture."
+
+[[models]]
+model_id = "SWivid/F5-TTS"
+name = "f5-tts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 8000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2000
+price_per_second = 0.001
+notes = "Flow-matching TTS. Strong zero-shot voice cloning. DiT architecture."
+
+[[models]]
+model_id = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
+name = "cosyvoice3"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 12000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 4000
+price_per_second = 0.002
+notes = "0.5B LLM-based TTS. Cross-lingual voice cloning. Streaming."
+
+[[models]]
+model_id = "ResembleAI/chatterbox-tts"
+name = "chatterbox-tts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 8000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2500
+price_per_second = 0.001
+notes = "Zero-shot voice cloning TTS. Good emotion control."
+
+[[models]]
+model_id = "parler-tts/parler-tts-large-v1"
+name = "parler-tts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 12000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 3000
+price_per_second = 0.0015
+notes = "Text-described voice control. 'A female speaker with a warm tone...' style prompts."
+
+[[models]]
+model_id = "fishaudio/fish-speech-1.5"
+name = "fish-speech"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 10000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2000
+price_per_second = 0.001
+notes = "VQGAN + LLM TTS. Fast zero-shot cloning. Multilingual."
+
+[[models]]
+model_id = "OuteAI/OuteTTS-1.0-1B"
+name = "oute-tts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 6000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2500
+price_per_second = 0.001
+notes = "1B LLM-based TTS. Pure transformer, no vocoders."
+
+# =============================================================================
+# SPEECH-TO-TEXT (STT) MODELS
+# =============================================================================
+
+[[models]]
+model_id = "openai/whisper-large-v3-turbo"
+name = "whisper-large-v3-turbo"
+task_type = "stt"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "whisper"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 1500
+price_per_second = 0.0004
+notes = "809M distilled Whisper. 8x faster than large-v3. Near-identical WER."
+
+[[models]]
+model_id = "openai/whisper-large-v3"
+name = "whisper-large-v3"
+task_type = "stt"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 6000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "whisper"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 4000
+price_per_second = 0.0006
+notes = "1.5B. Best accuracy. Use turbo variant unless WER matters."
+
+[[models]]
+model_id = "nvidia/canary-1b"
+name = "canary-1b"
+task_type = "stt"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 2000
+price_per_second = 0.0005
+notes = "NeMo Canary. Multilingual ASR + translation. RNNT/CTC hybrid."
+
+[[models]]
+model_id = "Systran/faster-whisper-large-v3"
+name = "faster-whisper-v3"
+task_type = "stt"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 3000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 2000
+price_per_second = 0.0004
+notes = "CTranslate2 Whisper. INT8 quantized. 4x faster than original."
+
+# =============================================================================
+# MUSIC GENERATION MODELS
+# =============================================================================
+
+[[models]]
+model_id = "facebook/musicgen-large"
+name = "musicgen-large"
+task_type = "music-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/audio/generations"
+estimated_latency_ms = 15000
+price_per_second = 0.005
+notes = "3.3B. 30s music from text. Mono 32kHz."
+
+[[models]]
+model_id = "facebook/musicgen-stereo-large"
+name = "musicgen-stereo-large"
+task_type = "music-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/audio/generations"
+estimated_latency_ms = 18000
+price_per_second = 0.006
+notes = "Stereo variant. Same model, interleaved codebooks for L/R."
+
+[[models]]
+model_id = "facebook/musicgen-melody-large"
+name = "musicgen-melody"
+task_type = "music-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 16000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/audio/generations"
+estimated_latency_ms = 16000
+price_per_second = 0.005
+notes = "Melody-conditioned. Accepts reference audio for style transfer."
+
+[[models]]
+model_id = "stabilityai/stable-audio-open-1.0"
+name = "stable-audio"
+task_type = "music-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 10000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "diffusers"
+endpoint_path = "/v1/audio/generations"
+estimated_latency_ms = 8000
+price_per_second = 0.003
+notes = "Latent diffusion audio. 47s stereo 44.1kHz. Timing control."
+
+# =============================================================================
+# VOICE ACTIVITY / SPEAKER / LANGUAGE DETECTION
+# =============================================================================
+
+[[models]]
+model_id = "pyannote/speaker-diarization-3.1"
+name = "pyannote-diarization"
+task_type = "diarize"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 2000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/diarize"
+estimated_latency_ms = 5000
+price_per_second = 0.0003
+notes = "SOTA speaker diarization. Requires pyannote auth token."
+
+[[models]]
+model_id = "speechbrain/vad-crdnn-libriparty"
+name = "speechbrain-vad"
+task_type = "vad"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 1000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/detect"
+estimated_latency_ms = 200
+price_per_second = 0.0001
+notes = "Lightweight VAD. CPU viable but GPU for throughput."
+
+# =============================================================================
+# VISION-LANGUAGE MODELS (VLM)
+# =============================================================================
+
+[[models]]
+model_id = "Qwen/Qwen2.5-VL-72B-Instruct"
+name = "qwen2.5-vl-72b"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 150000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 32768
+estimated_latency_ms = 800
+price_per_m_tokens = 0.50
+notes = "Best open VLM. Image + video understanding. Dynamic resolution."
+
+[[models]]
+model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
+name = "qwen2.5-vl-7b"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 18000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 32768
+estimated_latency_ms = 400
+price_per_m_tokens = 0.08
+notes = "Compact VLM. Document/chart understanding on A10G."
+
+[[models]]
+model_id = "meta-llama/Llama-3.2-90B-Vision-Instruct"
+name = "llama-3.2-90b-vision"
+task_type = "text-generation"
+gpu_type = "H100"
+gpu_count = 2
+vram_required_mib = 180000
+recommended_tp = 2
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 800
+price_per_m_tokens = 0.50
+notes = "90B vision-language. Image reasoning."
+
+[[models]]
+model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+name = "llama-3.2-11b-vision"
+task_type = "text-generation"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "vllm/vllm-openai:v0.8.5"
+inference_engine = "vllm"
+endpoint_path = "/v1/chat/completions"
+context_length = 131072
+estimated_latency_ms = 400
+price_per_m_tokens = 0.10
+notes = "11B vision. A10G with INT8."
+
+# =============================================================================
+# RERANKING MODELS
+# =============================================================================
+
+[[models]]
+model_id = "BAAI/bge-reranker-v2-m3"
+name = "bge-reranker-v2"
+task_type = "rerank"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 2000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "transformers"
+endpoint_path = "/v1/rerank"
+estimated_latency_ms = 50
+price_per_m_tokens = 0.005
+notes = "568M cross-encoder reranker. Multilingual."
