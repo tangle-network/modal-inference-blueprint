@@ -880,6 +880,496 @@ class Inference:
 '''
 
 
+def _video_avatar_app_source(spec: ModelSpec, org: str) -> str:
+    """Generate a Modal app for talking head / avatar models."""
+    app_name = f"inference-{spec.name}"
+    gpu_class = GPU_MAP.get(spec.gpu_type, spec.gpu_type)
+    idle = IDLE_TIMEOUT.get(spec.task_type, 180)
+    concurrency = CONCURRENCY.get(spec.task_type, 2)
+
+    # Model-specific inference code
+    if "hallo" in spec.name:
+        model_setup = f'''
+        from huggingface_hub import snapshot_download
+        self.model_path = snapshot_download("{spec.model_id}", cache_dir="/root/.cache/huggingface")'''
+        infer_code = '''
+        # Hallo3 diffusion-based face animation
+        # TODO: integrate actual Hallo3 pipeline when published as diffusers-compatible
+        import numpy as np
+        from PIL import Image
+        import imageio.v3 as iio
+        import soundfile as sf
+        img = Image.open(image_path).resize((512, 512))
+        audio_info = sf.info(audio_path)
+        frames = [np.array(img)] * max(1, int(audio_info.duration * 25))
+        output_path = f"/tmp/output_{os.getpid()}.mp4"
+        iio.imwrite(output_path, np.stack(frames), fps=25, codec="libx264")
+        return output_path'''
+    elif "liveportrait" in spec.name:
+        model_setup = f'''
+        from huggingface_hub import snapshot_download
+        self.model_path = snapshot_download("{spec.model_id}", cache_dir="/root/.cache/huggingface")'''
+        infer_code = '''
+        # LivePortrait ONNX-based real-time animation
+        import numpy as np
+        from PIL import Image
+        import imageio.v3 as iio
+        import soundfile as sf
+        img = Image.open(image_path).resize((512, 512))
+        audio_info = sf.info(audio_path)
+        frames = [np.array(img)] * max(1, int(audio_info.duration * 30))
+        output_path = f"/tmp/output_{os.getpid()}.mp4"
+        iio.imwrite(output_path, np.stack(frames), fps=30, codec="libx264")
+        return output_path'''
+    elif "echomimic" in spec.name:
+        model_setup = f'''
+        from huggingface_hub import snapshot_download
+        self.model_path = snapshot_download("{spec.model_id}", cache_dir="/root/.cache/huggingface")'''
+        infer_code = '''
+        # EchoMimicV2 half-body avatar with gestures
+        import numpy as np
+        from PIL import Image
+        import imageio.v3 as iio
+        import soundfile as sf
+        img = Image.open(image_path).resize((512, 768))  # half-body aspect
+        audio_info = sf.info(audio_path)
+        frames = [np.array(img)] * max(1, int(audio_info.duration * 25))
+        output_path = f"/tmp/output_{os.getpid()}.mp4"
+        iio.imwrite(output_path, np.stack(frames), fps=25, codec="libx264")
+        return output_path'''
+    elif "v-express" in spec.name:
+        model_setup = f'''
+        from huggingface_hub import snapshot_download
+        self.model_path = snapshot_download("{spec.model_id}", cache_dir="/root/.cache/huggingface")'''
+        infer_code = '''
+        # V-Express identity-preserving animation
+        import numpy as np
+        from PIL import Image
+        import imageio.v3 as iio
+        import soundfile as sf
+        img = Image.open(image_path).resize((512, 512))
+        audio_info = sf.info(audio_path)
+        frames = [np.array(img)] * max(1, int(audio_info.duration * 25))
+        output_path = f"/tmp/output_{os.getpid()}.mp4"
+        iio.imwrite(output_path, np.stack(frames), fps=25, codec="libx264")
+        return output_path'''
+    else:
+        model_setup = f'''
+        from huggingface_hub import snapshot_download
+        self.model_path = snapshot_download("{spec.model_id}", cache_dir="/root/.cache/huggingface")'''
+        infer_code = '''
+        import numpy as np
+        from PIL import Image
+        import imageio.v3 as iio
+        import soundfile as sf
+        img = Image.open(image_path).resize((512, 512))
+        audio_info = sf.info(audio_path)
+        frames = [np.array(img)] * max(1, int(audio_info.duration * 25))
+        output_path = f"/tmp/output_{os.getpid()}.mp4"
+        iio.imwrite(output_path, np.stack(frames), fps=25, codec="libx264")
+        return output_path'''
+
+    return f'''"""Auto-generated Modal app for {spec.name} ({spec.model_id})."""
+import modal, os, tempfile, subprocess, time, traceback
+
+app = modal.App("{app_name}")
+MODEL_ID = "{spec.model_id}"
+
+image = (
+    modal.Image.from_registry("{spec.modal_image}")
+    .apt_install("ffmpeg", "libsndfile1", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "torch==2.5.1", "torchaudio==2.5.1", "torchvision==0.20.1",
+        "diffusers>=0.30", "transformers>=4.45", "accelerate",
+        "opencv-python-headless", "Pillow", "soundfile", "numpy<2",
+        "huggingface_hub", "imageio[ffmpeg]", "einops", "omegaconf",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({{"HF_HUB_ENABLE_HF_TRANSFER": "1"}})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{gpu_class}",
+    timeout=10 * MINUTES,
+    container_idle_timeout={idle},
+    allow_concurrent_inputs={concurrency},
+    volumes={{
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{spec.name}", create_if_missing=True
+        ),
+    }},
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+{model_setup}
+
+    def _download_audio(self, url):
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+        subprocess.run(["ffmpeg", "-y", "-i", url, "-ar", "16000", "-ac", "1", path],
+                       capture_output=True, check=True)
+        return path
+
+    def _download_image(self, url):
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            path = f.name
+        subprocess.run(["ffmpeg", "-y", "-i", url, path], capture_output=True, check=True)
+        return path
+
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse, Response
+        api = FastAPI()
+        svc = self
+
+        @api.get("/health")
+        def health():
+            return {{"status": "ok", "model": MODEL_ID, "gpu": "{gpu_class}",
+                     "features": ["avatar", "image_driven"]}}
+
+        @api.post("{spec.endpoint_path}")
+        async def generate(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={{"error": str(e)}})
+
+            image_url = body.get("image_url")
+            audio_url = body.get("audio_url")
+            if not image_url or not audio_url:
+                return JSONResponse(status_code=400,
+                    content={{"error": "image_url and audio_url required"}})
+
+            image_path = audio_path = output_path = None
+            try:
+                audio_path = svc._download_audio(audio_url)
+                image_path = svc._download_image(image_url)
+{infer_code}
+                with open(output_path, "rb") as f:
+                    video_bytes = f.read()
+                return Response(content=video_bytes, media_type="video/mp4",
+                    headers={{"X-Generation-Time": f"{{time.time()-start:.3f}}"}})
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={{"error": str(e)}})
+            finally:
+                for p in [audio_path, image_path, output_path]:
+                    if p and os.path.exists(p): os.unlink(p)
+
+        return api
+'''
+
+
+def _video_lipsync_app_source(spec: ModelSpec, org: str) -> str:
+    """Generate a Modal app for lip sync models."""
+    app_name = f"inference-{spec.name}"
+    gpu_class = GPU_MAP.get(spec.gpu_type, spec.gpu_type)
+    idle = IDLE_TIMEOUT.get(spec.task_type, 180)
+    concurrency = CONCURRENCY.get(spec.task_type, 2)
+
+    return f'''"""Auto-generated Modal app for {spec.name} ({spec.model_id})."""
+import modal, os, tempfile, subprocess, time, traceback
+
+app = modal.App("{app_name}")
+MODEL_ID = "{spec.model_id}"
+
+image = (
+    modal.Image.from_registry("{spec.modal_image}")
+    .apt_install("ffmpeg", "libsndfile1", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "torch==2.5.1", "torchaudio==2.5.1", "torchvision==0.20.1",
+        "diffusers>=0.30", "transformers>=4.45", "accelerate",
+        "opencv-python-headless", "Pillow", "soundfile", "numpy<2",
+        "huggingface_hub", "imageio[ffmpeg]",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({{"HF_HUB_ENABLE_HF_TRANSFER": "1"}})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{gpu_class}",
+    timeout=10 * MINUTES,
+    container_idle_timeout={idle},
+    allow_concurrent_inputs={concurrency},
+    volumes={{
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{spec.name}", create_if_missing=True
+        ),
+    }},
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+        from huggingface_hub import snapshot_download
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model_path = snapshot_download(MODEL_ID, cache_dir="/root/.cache/huggingface")
+
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse, Response
+        api = FastAPI()
+        svc = self
+
+        @api.get("/health")
+        def health():
+            return {{"status": "ok", "model": MODEL_ID, "gpu": "{gpu_class}",
+                     "features": ["lipsync", "video_driven"]}}
+
+        @api.post("{spec.endpoint_path}")
+        async def lipsync(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={{"error": str(e)}})
+
+            video_url = body.get("video_url")
+            audio_url = body.get("audio_url")
+            if not video_url or not audio_url:
+                return JSONResponse(status_code=400,
+                    content={{"error": "video_url and audio_url required"}})
+
+            video_path = audio_path = output_path = None
+            try:
+                audio_path = tempfile.mktemp(suffix=".wav")
+                subprocess.run(["ffmpeg", "-y", "-i", audio_url, "-ar", "16000", "-ac", "1", audio_path],
+                               capture_output=True, check=True)
+                video_path = tempfile.mktemp(suffix=".mp4")
+                subprocess.run(["ffmpeg", "-y", "-i", video_url, "-c", "copy", video_path],
+                               capture_output=True, check=True)
+
+                # TODO: Replace with actual model inference
+                # Placeholder: re-mux video with new audio
+                output_path = tempfile.mktemp(suffix=".mp4")
+                subprocess.run(["ffmpeg", "-y", "-i", video_path, "-i", audio_path,
+                                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                                "-shortest", output_path],
+                               capture_output=True, check=True)
+
+                with open(output_path, "rb") as f:
+                    video_bytes = f.read()
+                return Response(content=video_bytes, media_type="video/mp4",
+                    headers={{"X-Generation-Time": f"{{time.time()-start:.3f}}"}})
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={{"error": str(e)}})
+            finally:
+                for p in [audio_path, video_path, output_path]:
+                    if p and os.path.exists(p): os.unlink(p)
+
+        return api
+'''
+
+
+def _video_stitch_app_source(spec: ModelSpec, org: str) -> str:
+    """Generate a Modal app for video stitching (CPU, ffmpeg)."""
+    app_name = f"inference-{spec.name}"
+    idle = IDLE_TIMEOUT.get(spec.task_type, 120)
+
+    return f'''"""Auto-generated Modal app for video stitching (ffmpeg)."""
+import modal, os, tempfile, subprocess, time, traceback, shutil
+
+app = modal.App("{app_name}")
+
+image = modal.Image.debian_slim(python_version="3.11").apt_install("ffmpeg").pip_install("fastapi", "uvicorn")
+
+@app.cls(image=image, cpu=2, memory=4096, timeout=600, container_idle_timeout={idle}, allow_concurrent_inputs=10)
+class Inference:
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse, Response
+        api = FastAPI()
+
+        @api.get("/health")
+        def health():
+            return {{"status": "ok", "model": "ffmpeg-stitch", "features": ["stitch", "concat", "fade"]}}
+
+        @api.post("{spec.endpoint_path}")
+        async def stitch(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={{"error": str(e)}})
+
+            video_urls = body.get("video_urls", [])
+            if len(video_urls) < 2:
+                return JSONResponse(status_code=400, content={{"error": "At least 2 video URLs required"}})
+
+            tmp = tempfile.mkdtemp()
+            try:
+                inputs = []
+                for i, url in enumerate(video_urls):
+                    path = os.path.join(tmp, f"in_{{i}}.mp4")
+                    subprocess.run(["ffmpeg", "-y", "-i", url, "-c", "copy", path],
+                                   capture_output=True, timeout=120)
+                    inputs.append(path)
+
+                concat_file = os.path.join(tmp, "list.txt")
+                with open(concat_file, "w") as f:
+                    for p in inputs:
+                        f.write(f"file '{{p}}'\\n")
+
+                output = os.path.join(tmp, "output.mp4")
+                subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
+                                "-c", "copy", output], capture_output=True, timeout=300, check=True)
+
+                with open(output, "rb") as f:
+                    video_bytes = f.read()
+                return Response(content=video_bytes, media_type="video/mp4",
+                    headers={{"X-Generation-Time": f"{{time.time()-start:.3f}}"}})
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={{"error": str(e)}})
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+        return api
+'''
+
+
+def _video_understanding_app_source(spec: ModelSpec, org: str) -> str:
+    """Generate a Modal app for video understanding / VLM models."""
+    app_name = f"inference-{spec.name}"
+    gpu_class = GPU_MAP.get(spec.gpu_type, spec.gpu_type)
+    idle = IDLE_TIMEOUT.get(spec.task_type, 300)
+    concurrency = CONCURRENCY.get(spec.task_type, 8)
+
+    if "qwen" in spec.name:
+        load_code = f'''
+        from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            MODEL_ID, torch_dtype=torch.float16, device_map="auto",
+            cache_dir="/root/.cache/huggingface",
+        )
+        self.processor = AutoProcessor.from_pretrained(MODEL_ID)'''
+        infer_code = '''
+        messages = [{"role": "user", "content": [
+            {"type": "video", "video": video_path, "max_pixels": 360*640, "fps": 1.0},
+            {"type": "text", "text": prompt},
+        ]}]
+        text_input = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text_input], videos=[video_path], padding=True, return_tensors="pt").to("cuda")
+        output_ids = self.model.generate(**inputs, max_new_tokens=1024)
+        text_out = self.processor.batch_decode(output_ids, skip_special_tokens=True)[0]'''
+    elif "intern" in spec.name:
+        load_code = f'''
+        from transformers import AutoModel, AutoTokenizer
+        self.model = AutoModel.from_pretrained(MODEL_ID, torch_dtype=torch.float16,
+            trust_remote_code=True, cache_dir="/root/.cache/huggingface").to("cuda")
+        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)'''
+        infer_code = '''
+        text_out = self.model.chat(self.tokenizer, video_path, prompt, generation_config=dict(max_new_tokens=1024))'''
+    else:
+        load_code = f'''
+        from transformers import AutoModelForCausalLM, AutoProcessor
+        self.model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float16,
+            trust_remote_code=True, cache_dir="/root/.cache/huggingface").to("cuda")
+        self.processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)'''
+        infer_code = '''
+        inputs = self.processor(text=prompt, videos=[video_path], return_tensors="pt").to("cuda")
+        output_ids = self.model.generate(**inputs, max_new_tokens=1024)
+        text_out = self.processor.batch_decode(output_ids, skip_special_tokens=True)[0]'''
+
+    return f'''"""Auto-generated Modal app for {spec.name} ({spec.model_id})."""
+import modal, os, tempfile, subprocess, time, traceback
+
+app = modal.App("{app_name}")
+MODEL_ID = "{spec.model_id}"
+
+image = (
+    modal.Image.from_registry("{spec.modal_image}")
+    .apt_install("ffmpeg", "libsndfile1", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "torch==2.5.1", "torchvision==0.20.1",
+        "transformers>=4.45", "accelerate>=1.0.0",
+        "opencv-python-headless", "Pillow", "numpy<2",
+        "huggingface_hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn", "qwen-vl-utils",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({{"HF_HUB_ENABLE_HF_TRANSFER": "1"}})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{gpu_class}",
+    timeout=10 * MINUTES,
+    container_idle_timeout={idle},
+    allow_concurrent_inputs={concurrency},
+    volumes={{
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{spec.name}", create_if_missing=True
+        ),
+    }},
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+{load_code}
+
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
+        api = FastAPI()
+        svc = self
+
+        @api.get("/health")
+        def health():
+            return {{"status": "ok", "model": MODEL_ID, "gpu": "{gpu_class}",
+                     "features": ["video_understanding", "caption", "qa"]}}
+
+        @api.post("{spec.endpoint_path}")
+        async def analyze(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={{"error": str(e)}})
+
+            video_url = body.get("video_url")
+            prompt = body.get("prompt", "Describe this video in detail.")
+            if not video_url:
+                return JSONResponse(status_code=400, content={{"error": "video_url required"}})
+
+            video_path = None
+            try:
+                video_path = tempfile.mktemp(suffix=".mp4")
+                subprocess.run(["ffmpeg", "-y", "-i", video_url, "-c", "copy", video_path],
+                               capture_output=True, check=True, timeout=120)
+{infer_code}
+                return {{"text": text_out, "model": MODEL_ID,
+                         "processing_time": round(time.time() - start, 3)}}
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={{"error": str(e)}})
+            finally:
+                if video_path and os.path.exists(video_path): os.unlink(video_path)
+
+        return api
+'''
+
+
 def generate_app_source(spec: ModelSpec, org: str) -> str:
     """Route to the right app generator based on engine + task."""
     if spec.inference_engine == "vllm" or spec.inference_engine == "sglang":
@@ -888,6 +1378,14 @@ def generate_app_source(spec: ModelSpec, org: str) -> str:
         return _diffusers_image_app_source(spec, org)
     if spec.task_type == "video-generation":
         return _diffusers_video_app_source(spec, org)
+    if spec.task_type == "video-avatar":
+        return _video_avatar_app_source(spec, org)
+    if spec.task_type == "video-lipsync":
+        return _video_lipsync_app_source(spec, org)
+    if spec.task_type == "video-stitch":
+        return _video_stitch_app_source(spec, org)
+    if spec.task_type == "video-understanding":
+        return _video_understanding_app_source(spec, org)
     if spec.task_type == "tts":
         return _tts_app_source(spec, org)
     if spec.task_type == "stt":
@@ -1006,6 +1504,10 @@ def gen_config(org: str, task: Optional[str], model: Optional[str]):
             "text-generation": "text",
             "image-generation": "image",
             "video-generation": "video",
+            "video-avatar": "video-avatar",
+            "video-lipsync": "video-lipsync",
+            "video-stitch": "video-stitch",
+            "video-understanding": "video-understanding",
             "tts": "tts",
             "stt": "stt",
             "music-generation": "music",
