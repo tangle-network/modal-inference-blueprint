@@ -1,0 +1,100 @@
+"""{{ spec.name }} — {{ spec.model_id }} — talking head avatar generation."""
+import modal, os, tempfile, subprocess, time, traceback
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .apt_install("ffmpeg", "libsndfile1", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "torch==2.5.1", "torchaudio==2.5.1", "torchvision==0.20.1",
+        "diffusers>=0.30", "transformers>=4.45", "accelerate",
+        "opencv-python-headless", "Pillow", "soundfile", "numpy<2",
+        "huggingface_hub", "imageio[ffmpeg]", "einops", "omegaconf",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=10 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs={{ concurrency }},
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+        from huggingface_hub import snapshot_download
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model_path = snapshot_download(MODEL_ID, cache_dir="/root/.cache/huggingface")
+
+    def _download_audio(self, url):
+        path = tempfile.mktemp(suffix=".wav")
+        subprocess.run(["ffmpeg", "-y", "-i", url, "-ar", "16000", "-ac", "1", path],
+                       capture_output=True, check=True)
+        return path
+
+    def _download_image(self, url):
+        path = tempfile.mktemp(suffix=".png")
+        subprocess.run(["ffmpeg", "-y", "-i", url, path], capture_output=True, check=True)
+        return path
+
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse, Response
+        api = FastAPI()
+        svc = self
+
+        @api.get("/health")
+        def health():
+            return {"status": "ok", "model": MODEL_ID, "gpu": "{{ gpu_class }}",
+                    "features": ["avatar", "image_driven"]}
+
+        @api.post("{{ spec.endpoint_path }}")
+        async def generate(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": str(e)})
+            image_url = body.get("image_url")
+            audio_url = body.get("audio_url")
+            if not image_url or not audio_url:
+                return JSONResponse(status_code=400, content={"error": "image_url and audio_url required"})
+            image_path = audio_path = output_path = None
+            try:
+                audio_path = svc._download_audio(audio_url)
+                image_path = svc._download_image(image_url)
+                # TODO: Replace placeholder with actual {{ spec.name }} inference pipeline
+                import numpy as np, soundfile as sf, imageio.v3 as iio
+                from PIL import Image
+                img = Image.open(image_path).resize((512, 512))
+                audio_info = sf.info(audio_path)
+                frames = [np.array(img)] * max(1, int(audio_info.duration * 25))
+                output_path = tempfile.mktemp(suffix=".mp4")
+                iio.imwrite(output_path, np.stack(frames), fps=25, codec="libx264")
+                with open(output_path, "rb") as f:
+                    video_bytes = f.read()
+                return Response(content=video_bytes, media_type="video/mp4",
+                    headers={"X-Generation-Time": f"{time.time()-start:.3f}"})
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={"error": str(e)})
+            finally:
+                for p in [audio_path, image_path, output_path]:
+                    if p and os.path.exists(p): os.unlink(p)
+
+        return api

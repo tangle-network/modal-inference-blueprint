@@ -1253,9 +1253,174 @@ estimated_latency_ms = 2500
 price_per_second = 0.001
 notes = "1B LLM-based TTS. Pure transformer, no vocoders."
 
+[[models]]
+model_id = "nari-labs/Dia-1.6B"
+name = "dia-tts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 8000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 3000
+price_per_second = 0.001
+notes = "1.6B dialogue TTS. Multi-speaker, emotion tags. Apache 2.0."
+
+[[models]]
+model_id = "sesame/csm-1b"
+name = "sesame-csm"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 6000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2000
+price_per_second = 0.001
+notes = "Conversational speech model. Context-aware prosody. Apache 2.0."
+
+[[models]]
+model_id = "stepfun-ai/Step-Audio-TTS-v1"
+name = "step-audio"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 10000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 3000
+price_per_second = 0.002
+notes = "130B speech understanding + generation. Emotion, dialect, singing."
+
+[[models]]
+model_id = "bosonai/higgs-audio-v2"
+name = "higgs-audio"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 8000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2000
+price_per_second = 0.001
+notes = "Audio generation + understanding. Dual-mode inference."
+
+[[models]]
+model_id = "IndexTeam/IndexTTS-v2"
+name = "indextts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 6000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2500
+price_per_second = 0.001
+notes = "Index-based TTS with voice cloning."
+
+[[models]]
+model_id = "SparkAudioTTS/Spark-TTS-0.5B"
+name = "sparktts"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 1500
+price_per_second = 0.0005
+notes = "0.5B lightweight TTS. Fast inference, zero-shot cloning."
+
+[[models]]
+model_id = "myshell-ai/OpenVoice"
+name = "openvoice"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 2000
+price_per_second = 0.001
+notes = "Instant voice cloning. Tone color converter. MIT license."
+
+[[models]]
+model_id = "canopylabs/orpheus-3b-0.1-ft"
+name = "orpheus"
+task_type = "tts"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 10000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/speech"
+estimated_latency_ms = 3000
+price_per_second = 0.002
+notes = "3B LLM-based TTS. Emotion-rich speech synthesis."
+
 # =============================================================================
 # SPEECH-TO-TEXT (STT) MODELS
 # =============================================================================
+
+[[models]]
+model_id = "distil-whisper/distil-large-v3"
+name = "distil-whisper-v3"
+task_type = "stt"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "whisper"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 1000
+price_per_second = 0.0003
+notes = "756M distilled Whisper. 6x faster, within 1% WER. Flash Attention 2."
+
+[[models]]
+model_id = "FunAudioLLM/SenseVoiceSmall"
+name = "sensevoice"
+task_type = "stt"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 800
+price_per_second = 0.0003
+notes = "5-15x faster than Whisper. 50+ languages. Emotion + audio event detection."
+
+[[models]]
+model_id = "nvidia/parakeet-rnnt-1.1b"
+name = "parakeet"
+task_type = "stt"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/transcriptions"
+estimated_latency_ms = 1000
+price_per_second = 0.0004
+notes = "1.1B RNNT. NVIDIA NeMo. Fast streaming-capable ASR."
 
 [[models]]
 model_id = "openai/whisper-large-v3-turbo"
@@ -1414,6 +1579,81 @@ endpoint_path = "/v1/audio/detect"
 estimated_latency_ms = 200
 price_per_second = 0.0001
 notes = "Lightweight VAD. CPU viable but GPU for throughput."
+
+[[models]]
+model_id = "nvidia/NeMo-diarization"
+name = "nemo-diarization"
+task_type = "diarize"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 4000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/diarize"
+estimated_latency_ms = 5000
+price_per_second = 0.0003
+notes = "NeMo clustering diarization. Alternative to pyannote."
+
+[[models]]
+model_id = "speechbrain/lang-id-voxlingua107-ecapa"
+name = "speechbrain-lid"
+task_type = "vad"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 1000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/detect-language"
+estimated_latency_ms = 200
+price_per_second = 0.0001
+notes = "107-language identification. ECAPA-TDNN. CPU viable."
+
+[[models]]
+model_id = "snakers4/silero-vad"
+name = "silero-vad"
+task_type = "vad"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 500
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/detect"
+estimated_latency_ms = 50
+price_per_second = 0.00005
+notes = "Ultra-lightweight VAD. 8kHz/16kHz. ONNX. CPU-first."
+
+[[models]]
+model_id = "ritwikraha/DeepFilterNet3"
+name = "deepfilternet"
+task_type = "audio-processing"
+gpu_type = "T4"
+gpu_count = 1
+vram_required_mib = 1000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/enhance"
+estimated_latency_ms = 500
+price_per_second = 0.0002
+notes = "Real-time noise suppression. 48kHz. STFT-domain filtering."
+
+[[models]]
+model_id = "RVC-Project/Retrieval-based-Voice-Conversion"
+name = "rvc"
+task_type = "voice-conversion"
+gpu_type = "A10G"
+gpu_count = 1
+vram_required_mib = 6000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "custom"
+endpoint_path = "/v1/audio/convert"
+estimated_latency_ms = 3000
+price_per_second = 0.002
+notes = "Retrieval-based voice conversion. Real-time capable."
 
 # =============================================================================
 # VISION-LANGUAGE MODELS (VLM)

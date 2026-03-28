@@ -1,0 +1,68 @@
+"""{{ spec.name }} — {{ spec.model_id }} via diffusers video generation."""
+import modal, io
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .pip_install(
+        "torch==2.5.1", "diffusers>=0.31.0", "transformers>=4.44.0",
+        "accelerate>=1.0.0", "safetensors>=0.4.0", "sentencepiece",
+        "imageio[ffmpeg]", "imageio", "numpy",
+        "huggingface-hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu={{ gpu_spec }},
+    timeout=15 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs=1,
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+        from diffusers import {{ pipeline_cls }}
+        self.pipe = {{ pipeline_cls }}.from_pretrained(
+            MODEL_ID, torch_dtype=torch.float16, cache_dir="/root/.cache/huggingface",
+        ).to("cuda")
+
+    @modal.web_endpoint(method="POST")
+    def generate(self, request: dict):
+        import torch, base64, tempfile, numpy as np, imageio
+        from fastapi.responses import JSONResponse
+        prompt = request.get("prompt", "")
+        num_frames = request.get("num_frames", 49)
+        fps = request.get("fps", 16)
+        width = request.get("width", 480)
+        height = request.get("height", 720)
+        steps = request.get("num_inference_steps", 50)
+        seed = request.get("seed")
+        generator = torch.Generator("cuda").manual_seed(seed) if seed else None
+        result = self.pipe(prompt=prompt, num_frames=num_frames, width=width, height=height,
+            num_inference_steps=steps, generator=generator)
+        frames = result.frames[0]
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            frame_arrays = [np.array(frame) for frame in frames]
+            imageio.mimwrite(f.name, frame_arrays, fps=fps, codec="libx264")
+            f.seek(0)
+            video_bytes = open(f.name, "rb").read()
+        return JSONResponse({"created": __import__("time").time(),
+            "data": [{"b64_json": base64.b64encode(video_bytes).decode(), "content_type": "video/mp4"}]})
+
+    @modal.web_endpoint(method="GET")
+    def health(self):
+        return {"status": "ok", "model": MODEL_ID}

@@ -1,0 +1,111 @@
+"""{{ spec.name }} — {{ spec.model_id }} — video understanding / VLM."""
+import modal, os, tempfile, subprocess, time, traceback
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .apt_install("ffmpeg", "libsndfile1", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "torch==2.5.1", "torchvision==0.20.1",
+        "transformers>=4.45", "accelerate>=1.0.0",
+        "opencv-python-headless", "Pillow", "numpy<2",
+        "huggingface-hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn",
+{%- if "qwen" in spec.name %}
+        "qwen-vl-utils",
+{%- endif %}
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=10 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs={{ concurrency }},
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+{%- if "qwen" in spec.name %}
+        from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            MODEL_ID, torch_dtype=torch.float16, device_map="auto",
+            cache_dir="/root/.cache/huggingface")
+        self.processor = AutoProcessor.from_pretrained(MODEL_ID)
+{%- elif "intern" in spec.name %}
+        from transformers import AutoModel, AutoTokenizer
+        self.model = AutoModel.from_pretrained(MODEL_ID, torch_dtype=torch.float16,
+            trust_remote_code=True, cache_dir="/root/.cache/huggingface").to("cuda")
+        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+{%- else %}
+        from transformers import AutoModelForCausalLM, AutoProcessor
+        self.model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float16,
+            trust_remote_code=True, cache_dir="/root/.cache/huggingface").to("cuda")
+        self.processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+{%- endif %}
+
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
+        api = FastAPI()
+        svc = self
+
+        @api.get("/health")
+        def health():
+            return {"status": "ok", "model": MODEL_ID, "gpu": "{{ gpu_class }}",
+                    "features": ["video_understanding", "caption", "qa"]}
+
+        @api.post("{{ spec.endpoint_path }}")
+        async def analyze(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": str(e)})
+            video_url = body.get("video_url")
+            prompt = body.get("prompt", "Describe this video in detail.")
+            if not video_url:
+                return JSONResponse(status_code=400, content={"error": "video_url required"})
+            video_path = None
+            try:
+                video_path = tempfile.mktemp(suffix=".mp4")
+                subprocess.run(["ffmpeg", "-y", "-i", video_url, "-c", "copy", video_path],
+                               capture_output=True, check=True, timeout=120)
+{%- if "qwen" in spec.name %}
+                messages = [{"role": "user", "content": [
+                    {"type": "video", "video": video_path, "max_pixels": 360*640, "fps": 1.0},
+                    {"type": "text", "text": prompt},
+                ]}]
+                text_input = svc.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                inputs = svc.processor(text=[text_input], videos=[video_path], padding=True, return_tensors="pt").to("cuda")
+                output_ids = svc.model.generate(**inputs, max_new_tokens=1024)
+                text_out = svc.processor.batch_decode(output_ids, skip_special_tokens=True)[0]
+{%- elif "intern" in spec.name %}
+                text_out = svc.model.chat(svc.tokenizer, video_path, prompt, generation_config=dict(max_new_tokens=1024))
+{%- else %}
+                inputs = svc.processor(text=prompt, videos=[video_path], return_tensors="pt").to("cuda")
+                output_ids = svc.model.generate(**inputs, max_new_tokens=1024)
+                text_out = svc.processor.batch_decode(output_ids, skip_special_tokens=True)[0]
+{%- endif %}
+                return {"text": text_out, "model": MODEL_ID, "processing_time": round(time.time() - start, 3)}
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={"error": str(e)})
+            finally:
+                if video_path and os.path.exists(video_path): os.unlink(video_path)
+
+        return api

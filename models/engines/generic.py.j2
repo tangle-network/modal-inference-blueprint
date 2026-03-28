@@ -1,0 +1,50 @@
+"""{{ spec.name }} — {{ spec.model_id }} — generic transformers pipeline."""
+import modal
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .pip_install(
+        "torch==2.5.1", "transformers>=4.44.0",
+        "accelerate>=1.0.0", "safetensors>=0.4.0",
+        "huggingface-hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=5 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs=4,
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+        from transformers import pipeline
+        self.pipe = pipeline("text-generation", model=MODEL_ID, torch_dtype=torch.float16, device_map="auto")
+
+    @modal.web_endpoint(method="POST")
+    def generate(self, request: dict):
+        from fastapi.responses import JSONResponse
+        prompt = request.get("prompt", "")
+        max_tokens = request.get("max_tokens", 512)
+        result = self.pipe(prompt, max_new_tokens=max_tokens)
+        return JSONResponse({"text": result[0]["generated_text"]})
+
+    @modal.web_endpoint(method="GET")
+    def health(self):
+        return {"status": "ok", "model": MODEL_ID}
