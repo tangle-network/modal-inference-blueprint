@@ -297,37 +297,63 @@ impl Default for BillingTangleConfig {
 }
 
 /// Per-task-type pricing in tsUSD base units (6 decimals: 1 = 0.000001 tsUSD).
+///
+/// Operators set prices for each billing dimension. The billing client
+/// selects the right price based on the task type of the model being served.
+///
+/// Maps to the on-chain PricingUnit enum in InferenceBSM.sol:
+///   PerMillionTokens  → price_per_million_tokens
+///   Per1KCharacters   → price_per_1k_chars
+///   PerSecondAudio    → price_per_second_audio
+///   PerSecondVideo    → price_per_second_video
+///   PerImage          → price_per_image
+///   PerJob            → price_per_job
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingConfig {
-    /// Price per 1,000 characters (TTS, clone, enhance)
+    /// Price per 1,000 characters (TTS, voice cloning, voice design)
     #[serde(default)]
     pub price_per_1k_chars: u64,
 
-    /// Price per second of audio (STT, diarize, translate, langid, vad)
+    /// Price per second of audio (STT, diarize, translate, langid, vad, s2s)
     #[serde(default)]
-    pub price_per_second: u64,
+    pub price_per_second_audio: u64,
+
+    /// Price per second of video (video-generation, video-avatar, video-lipsync)
+    #[serde(default)]
+    pub price_per_second_video: u64,
 
     /// Price per image generated
     #[serde(default)]
     pub price_per_image: u64,
 
-    /// Price per input token (text generation fallback)
+    /// Price per million input tokens (text generation)
     #[serde(default)]
-    pub price_per_input_token: u64,
+    pub price_per_million_input_tokens: u64,
 
-    /// Price per output token (text generation fallback)
+    /// Price per million output tokens (text generation)
     #[serde(default)]
-    pub price_per_output_token: u64,
+    pub price_per_million_output_tokens: u64,
+
+    /// Price per fixed job (stitch, enhance, voice-conversion, etc.)
+    #[serde(default)]
+    pub price_per_job: u64,
+
+    /// Price per second of music generated
+    #[serde(default)]
+    pub price_per_second_music: u64,
 }
 
 impl Default for PricingConfig {
     fn default() -> Self {
         Self {
             price_per_1k_chars: 0,
-            price_per_second: 0,
+            price_per_second_audio: 0,
+            price_per_second_video: 0,
             price_per_image: 0,
-            price_per_input_token: 0,
-            price_per_output_token: 0,
+            price_per_million_input_tokens: 0,
+            price_per_million_output_tokens: 0,
+            price_per_job: 0,
+            price_per_second_music: 0,
         }
     }
 }
