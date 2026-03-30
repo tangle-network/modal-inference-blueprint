@@ -120,12 +120,21 @@ class ModelSpec:
     price_per_image: float = 0.0
     price_per_second: float = 0.0
     notes: str = ""
+    service_file: str = ""
 
+
+SERVICES_DIR = Path(__file__).parent / "services"
 
 def load_registry(path: Path = REGISTRY_PATH) -> list[ModelSpec]:
     with open(path, "rb") as f:
         data = tomllib.load(f)
-    return [ModelSpec(**m) for m in data.get("models", [])]
+    specs = []
+    for m in data.get("models", []):
+        # Filter to known fields only (ignore extra TOML fields)
+        known = {f.name for f in ModelSpec.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in m.items() if k in known}
+        specs.append(ModelSpec(**filtered))
+    return specs
 
 
 def filter_models(models: list[ModelSpec], name: str | None = None,
@@ -153,8 +162,15 @@ def _resolve_pipeline_cls(spec: ModelSpec, pipelines: dict[str, str], default: s
 
 
 def render_app(spec: ModelSpec, org: str) -> str:
-    """Render a Modal app from a Jinja2 engine template."""
-    # Pick engine template
+    """Render a Modal app — either from a hand-written service file or a Jinja2 template."""
+    # Service-backed: use the hand-written production code
+    if spec.inference_engine == "service" and spec.service_file:
+        service_path = SERVICES_DIR / spec.service_file
+        if not service_path.exists():
+            raise FileNotFoundError(f"Service file not found: {service_path}")
+        return service_path.read_text()
+
+    # Template-backed: render from Jinja2
     if spec.inference_engine in ("vllm", "sglang"):
         engine = "vllm"
     else:
@@ -233,11 +249,22 @@ def deploy(model: str | None, task: str | None, deploy_all: bool,
     apps_dir = Path(out_dir) if out_dir else Path(__file__).parent / "apps"
     apps_dir.mkdir(parents=True, exist_ok=True)
 
+    # Ensure base_service.py is available for service-backed models
+    has_service_models = any(s.inference_engine == "service" for s in targets)
+    if has_service_models:
+        base_src = SERVICES_DIR / "base_service.py"
+        base_dst = apps_dir / "base_service.py"
+        if base_src.exists() and not base_dst.exists():
+            import shutil
+            shutil.copy2(base_src, base_dst)
+            click.echo(f"Copied: {base_dst} (shared dependency)")
+
     for spec in targets:
         source = render_app(spec, org)
         app_file = apps_dir / f"{spec.name}.py"
         app_file.write_text(source)
-        click.echo(f"Generated: {app_file}")
+        tag = "service" if spec.inference_engine == "service" else "generated"
+        click.echo(f"{'Copied' if tag == 'service' else 'Generated'}: {app_file} [{tag}]")
 
         if not dry_run:
             import subprocess
