@@ -1,13 +1,13 @@
-//! Auto-registration with the ph0ny marketplace.
+//! Auto-registration with the Tangle marketplace.
 //!
-//! On startup, the operator registers its models with the ph0ny Gateway
+//! On startup, the operator registers its models with the Tangle Gateway
 //! so traffic can be routed to it.
 
 use crate::config::OperatorConfig;
 use reqwest::Client;
 use tracing::{info, warn, error};
 
-/// Register this operator's models with the ph0ny marketplace.
+/// Register this operator's models with the Tangle marketplace.
 pub async fn register_with_gateway(config: &OperatorConfig) -> anyhow::Result<()> {
     let client = Client::new();
     let gateway_url = &config.gateway.url;
@@ -34,10 +34,10 @@ pub async fn register_with_gateway(config: &OperatorConfig) -> anyhow::Result<()
             .await
         {
             Ok(resp) if resp.status().is_success() => {
-                info!(model = %model.name, "Registered with ph0ny marketplace");
+                info!(model = %model.name, "Registered with Tangle marketplace");
             }
             Ok(resp) if resp.status().as_u16() == 409 => {
-                info!(model = %model.name, "Already registered with ph0ny marketplace");
+                info!(model = %model.name, "Already registered with Tangle marketplace");
             }
             Ok(resp) => {
                 warn!(
@@ -50,7 +50,7 @@ pub async fn register_with_gateway(config: &OperatorConfig) -> anyhow::Result<()
                 warn!(
                     model = %model.name,
                     error = %e,
-                    "Could not reach ph0ny marketplace (operating standalone)"
+                    "Could not reach Tangle marketplace (operating standalone)"
                 );
             }
         }

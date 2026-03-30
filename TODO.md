@@ -9,7 +9,7 @@
 - [x] Prometheus metrics + on-chain metric pairs (metrics.rs)
 - [x] Auto-registration with gateway marketplace (registry.rs)
 - [x] TOML config for models, pricing, QoS (config.rs)
-- [x] VoiceInferenceBSM.sol — inherits BlueprintServiceManagerBase
+- [x] InferenceBSM.sol — inherits BlueprintServiceManagerBase
 - [x] SlashingLib integration (propose → dispute → execute/cancel)
 - [x] Admin controls (toggle slashing, permitted callers, model config)
 - [x] Heartbeat config (50 blocks, 3 missed threshold)
@@ -27,7 +27,7 @@
 - [ ] On-chain metrics submission — call `submitMetrics()` on BSM periodically
 
 ### Contract
-- [ ] Forge tests for VoiceInferenceBSM
+- [ ] Forge tests for InferenceBSM
 - [ ] Test slashing flow: propose → dispute window → execute
 - [ ] Test auto-suspend on low uptime
 - [ ] Test admin controls (toggle slashing, permitted callers)

@@ -5,27 +5,21 @@ import { BlueprintServiceManagerBase } from "tnt-core/BlueprintServiceManagerBas
 import { SlashingLib } from "tnt-core/libraries/SlashingLib.sol";
 import { EnumerableSet } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-/// @title VoiceInferenceBSM
-/// @notice Blueprint Service Manager for voice AI inference on the ph0ny network.
+/// @title InferenceBSM
+/// @notice Blueprint Service Manager for multi-modal AI inference on the Tangle network.
+///
+/// Supports all inference task types: text generation, image generation, video
+/// (avatar, lipsync, generation, understanding), TTS, STT, speech-to-speech,
+/// music generation, diarization, voice conversion, and more.
+///
+/// Pricing is per-model with explicit unit types (tokens, characters, seconds,
+/// images, jobs) so operators can set accurate rates for each model they serve.
 ///
 /// Slashing architecture:
-///   - Heartbeat-based slashing: handled by Tangle Core protocol automatically.
-///     We just configure intervals/thresholds, protocol calls onUnappliedSlash/onSlash.
-///   - Performance-based slashing: BSM-initiated via SlashingLib for custom violations
+///   - Heartbeat-based: handled by Tangle Core protocol automatically.
+///   - Performance-based: BSM-initiated via SlashingLib for custom violations
 ///     (poor uptime, high error rate) with dispute windows. Admin-toggleable.
-///
-/// The protocol handles:
-///   - Heartbeat monitoring + missed heartbeat detection
-///   - Calling onUnappliedSlash when threshold is breached
-///   - Executing the actual stake deduction via onSlash
-///   - Exit queue enforcement
-///
-/// This contract handles:
-///   - Operator registration with GPU/model validation
-///   - On-chain metrics tracking (uptime, latency, errors)
-///   - Custom slash proposals for poor performance (via SlashingLib)
-///   - Admin controls (toggle slashing, manage operators, configure models)
-contract VoiceInferenceBSM is BlueprintServiceManagerBase {
+contract InferenceBSM is BlueprintServiceManagerBase {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -47,14 +41,25 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     event OperatorRegistered(address indexed operator, string[] models, uint32 gpuVramMib, string endpoint);
     event OperatorStatusChanged(address indexed operator, bool suspended, string reason);
     event MetricsSubmitted(address indexed operator, uint256 uptimeBps, uint256 avgLatencyMs, uint64 requestsTotal);
-    event ModelConfigured(string model, string taskType, uint64 pricePer1KUnits, uint32 minGpuVramMib);
+    event ModelConfigured(string model, string taskType, PricingUnit pricingUnit, uint64 pricePerUnit, uint32 minGpuVramMib);
     event SlashingToggled(bool enabled);
     event AdminSet(address indexed admin);
     event PermittedCallerSet(address indexed caller, bool permitted);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // STRUCTS
+    // ENUMS & STRUCTS
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice How a model's usage is metered. Each unit type maps to a
+    ///         billing dimension so the gateway can compute cost accurately.
+    enum PricingUnit {
+        PerMillionTokens,   // Text LLMs (input+output combined)
+        Per1KCharacters,    // TTS, voice cloning
+        PerSecondAudio,     // STT, diarization, VAD, S2S
+        PerSecondVideo,     // Video generation, avatar, lipsync
+        PerImage,           // Image generation
+        PerJob              // Fixed-cost tasks (stitch, enhance, etc.)
+    }
 
     struct OperatorInfo {
         string[] models;
@@ -74,7 +79,8 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
 
     struct ModelConfig {
         string taskType;
-        uint64 pricePer1KUnits;
+        PricingUnit pricingUnit;
+        uint64 pricePerUnit;      // in tsUSD base units (6 decimals)
         uint32 minGpuVramMib;
         bool enabled;
     }
@@ -95,7 +101,6 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     address public admin;
     bool public slashingEnabled;
 
-    // SlashingLib storage — for BSM-initiated performance slashing
     SlashingLib.SlashState private _slashState;
     mapping(uint64 => SlashingLib.SlashProposal) private _slashProposals;
 
@@ -127,12 +132,10 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     constructor(address _tsUSD, address _admin) {
         tsUSD = _tsUSD;
         admin = _admin;
-        slashingEnabled = false; // OFF by default — turn on when network is mature
+        slashingEnabled = false;
 
-        // Initialize SlashingLib with 1-day dispute window
         SlashingLib.initializeConfig(_slashState);
-        // Override to 1 day (default is 7 days)
-        SlashingLib.updateConfig(_slashState, 1 days, false, 1000); // max 10% slash
+        SlashingLib.updateConfig(_slashState, 1 days, false, 1000);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -154,13 +157,17 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
         emit PermittedCallerSet(caller, permitted);
     }
 
+    /// @notice Configure a model with explicit pricing unit type.
     function configureModel(
-        string calldata model, string calldata taskType,
-        uint64 pricePer1KUnits, uint32 minGpuVramMib
+        string calldata model,
+        string calldata taskType,
+        PricingUnit pricingUnit,
+        uint64 pricePerUnit,
+        uint32 minGpuVramMib
     ) external onlyAdmin {
         bytes32 key = keccak256(bytes(model));
-        modelConfigs[key] = ModelConfig(taskType, pricePer1KUnits, minGpuVramMib, true);
-        emit ModelConfigured(model, taskType, pricePer1KUnits, minGpuVramMib);
+        modelConfigs[key] = ModelConfig(taskType, pricingUnit, pricePerUnit, minGpuVramMib, true);
+        emit ModelConfigured(model, taskType, pricingUnit, pricePerUnit, minGpuVramMib);
     }
 
     function disableModel(string calldata model) external onlyAdmin {
@@ -192,7 +199,6 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
 
         emit MetricsSubmitted(operator, uptimeBps, avgLatencyMs, requestsTotal);
 
-        // Auto-suspend only when slashing is enabled
         if (slashingEnabled && uptimeBps < MIN_UPTIME_BPS && requestsTotal > 100 && !op.suspended) {
             op.suspended = true;
             emit OperatorStatusChanged(operator, true, "Auto-suspended: uptime below 90%");
@@ -200,46 +206,33 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // BSM-INITIATED SLASHING (via SlashingLib — for custom performance violations)
-    // Protocol handles heartbeat slashing automatically via onUnappliedSlash/onSlash.
-    // This is for ADDITIONAL slashing beyond heartbeats.
+    // BSM-INITIATED SLASHING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Propose slashing an operator for poor performance.
-    ///         Goes through SlashingLib dispute window (1 day default).
     function proposePerformanceSlash(
         uint64 serviceId, address operator, uint16 exposureBps, bytes32 evidence
     ) external onlyAdmin returns (uint64 slashId) {
         if (!slashingEnabled) revert SlashingDisabled();
         if (!operators[operator].active) revert OperatorNotRegistered(operator);
-
         slashId = SlashingLib.proposeSlash(
-            _slashState, _slashProposals,
-            serviceId, operator, msg.sender,
-            PERFORMANCE_SLASH_BPS, exposureBps, evidence,
-            false // not instant — goes through dispute window
+            _slashState, _slashProposals, serviceId, operator, msg.sender,
+            PERFORMANCE_SLASH_BPS, exposureBps, evidence, false
         );
-
         operators[operator].suspended = true;
         emit OperatorStatusChanged(operator, true, "Performance slash proposed");
     }
 
-    /// @notice Execute a performance slash after dispute window passes.
     function executePerformanceSlash(uint64 slashId) external onlyAdmin {
         if (!slashingEnabled) revert SlashingDisabled();
         SlashingLib.markExecuted(_slashProposals, slashId, 0);
-        // Tangle Core handles actual stake deduction when it sees the execution
     }
 
-    /// @notice Operator disputes a pending slash.
     function disputeSlash(uint64 slashId, string calldata reason) external {
         SlashingLib.disputeSlash(_slashProposals, slashId, msg.sender, reason);
     }
 
-    /// @notice Admin cancels a slash (e.g., dispute was valid).
     function cancelSlash(uint64 slashId, string calldata reason) external onlyAdmin {
         SlashingLib.cancelSlash(_slashProposals, slashId, msg.sender, reason);
-        // Unsuspend the operator
         address operator = _slashProposals[slashId].operator;
         if (operators[operator].active) {
             operators[operator].suspended = false;
@@ -247,7 +240,6 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
         }
     }
 
-    /// @notice Operator reactivates after improving metrics.
     function reactivate() external {
         OperatorInfo storage op = operators[msg.sender];
         if (!op.active) revert OperatorNotRegistered(msg.sender);
@@ -257,8 +249,7 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // BSM HOOKS — Protocol calls these. We override only what we need.
-    // BlueprintServiceManagerBase provides safe defaults for everything else.
+    // BSM HOOKS
     // ═══════════════════════════════════════════════════════════════════════════
 
     function onRegister(address operator, bytes calldata registrationInputs)
@@ -287,8 +278,7 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
         });
 
         _operatorSet.add(operator);
-        permittedCallers[operator] = true; // Operator can submit own metrics
-
+        permittedCallers[operator] = true;
         emit OperatorRegistered(operator, models, gpuVramMib, endpoint);
     }
 
@@ -304,8 +294,6 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
         operators[operator].endpoint = abi.decode(newPreferences, (string));
     }
 
-    /// @notice Protocol calls this when heartbeat threshold is breached.
-    ///         We suspend the operator. Protocol handles the actual slashing.
     function onUnappliedSlash(uint64, bytes calldata offender, uint8)
         external override onlyFromTangle
     {
@@ -316,7 +304,6 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
         }
     }
 
-    /// @notice Protocol calls this when slash is executed (stake deducted).
     function onSlash(uint64, bytes calldata offender, uint8)
         external override onlyFromTangle
     {
@@ -336,19 +323,19 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // CONFIGURATION — Tell the protocol our preferences
+    // CONFIGURATION
     // ═══════════════════════════════════════════════════════════════════════════
 
     function getHeartbeatInterval(uint64) external pure override returns (bool, uint64) {
-        return (false, 50); // ~5 min at 6s blocks
+        return (false, 50);
     }
 
     function getHeartbeatThreshold(uint64) external pure override returns (bool, uint8) {
-        return (false, 3); // 3 missed = protocol slashes
+        return (false, 3);
     }
 
     function getSlashingWindow(uint64) external pure override returns (bool, uint64) {
-        return (false, 600); // ~1 hour
+        return (false, 600);
     }
 
     function getExitConfig(uint64) external pure override returns (bool, uint64, uint64, bool) {
@@ -360,11 +347,11 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     }
 
     function querySlashingOrigin(uint64) external view override returns (address) {
-        return address(this); // This BSM can initiate slashing
+        return address(this);
     }
 
     function queryDisputeOrigin(uint64) external view override returns (address) {
-        return admin; // Admin handles disputes
+        return admin;
     }
 
     function queryDeveloperPaymentAddress(uint64) external view override returns (address payable) {
@@ -403,6 +390,10 @@ contract VoiceInferenceBSM is BlueprintServiceManagerBase {
     ) {
         OperatorInfo storage op = operators[operator];
         return (op.uptimeBps, op.avgLatencyMs, op.requestsTotal, op.requestsError, op.suspended, op.lastMetricsBlock);
+    }
+
+    function getModelConfig(string calldata model) external view returns (ModelConfig memory) {
+        return modelConfigs[keccak256(bytes(model))];
     }
 
     function getSlashProposal(uint64 slashId) external view returns (SlashingLib.SlashProposal memory) {
