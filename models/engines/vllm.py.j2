@@ -1,0 +1,72 @@
+"""{{ spec.name }} — {{ spec.model_id }} via vLLM OpenAI-compatible server."""
+import modal
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+vllm_image = (
+    modal.Image.from_registry("{{ spec.modal_image }}", add_python="3.11")
+    .pip_install("huggingface-hub[hf_transfer]>=0.25.0")
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.function(
+    image=vllm_image,
+    gpu={{ gpu_spec }},
+    timeout=10 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs={{ concurrency }},
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+@modal.asgi_app()
+def serve():
+    import subprocess, time, urllib.request
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    from starlette.responses import JSONResponse
+    import httpx
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
+
+    cmd = [
+        "python", "-m", "vllm.entrypoints.openai.api_server",
+        "--model", MODEL_ID,
+        "--host", "0.0.0.0",
+        "--port", "8000",
+{%- if spec.recommended_tp > 1 %}
+        "--tensor-parallel-size", "{{ spec.recommended_tp }}",
+{%- endif %}
+{%- if spec.context_length > 32768 %}
+        "--max-model-len", "{{ [spec.context_length, 131072] | min }}",
+{%- endif %}
+        "--dtype", "auto",
+        "--enforce-eager", "false",
+    ]
+    proc = subprocess.Popen(cmd)
+    for _ in range(120):
+        try:
+            urllib.request.urlopen("http://localhost:8000/health")
+            break
+        except Exception:
+            time.sleep(1)
+    else:
+        raise RuntimeError("vLLM server failed to start")
+
+    async def proxy(request: Request):
+        url = f"http://localhost:8000{request.url.path}"
+        client = httpx.AsyncClient()
+        body = await request.body()
+        resp = await client.request(request.method, url, content=body, headers=dict(request.headers))
+        return StreamingResponse(iter([resp.content]), status_code=resp.status_code, headers=dict(resp.headers))
+
+    return Starlette(routes=[
+        Route("/health", lambda r: JSONResponse({"status": "ok", "model": MODEL_ID}), methods=["GET"]),
+        Route("/v1/{path:path}", proxy, methods=["GET", "POST"]),
+        Route("/{path:path}", proxy, methods=["GET", "POST"]),
+    ])

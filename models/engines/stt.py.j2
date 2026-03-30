@@ -1,0 +1,76 @@
+"""{{ spec.name }} — {{ spec.model_id }} — speech-to-text."""
+import modal
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .apt_install("ffmpeg", "libsndfile1")
+    .pip_install(
+        "torch==2.5.1", "torchaudio==2.5.1",
+{%- if "faster-whisper" in spec.model_id | lower %}
+        "faster-whisper>=1.0.0",
+{%- elif "canary" in spec.name %}
+        "nemo_toolkit[asr]>=2.0.0",
+{%- else %}
+        "openai-whisper>=20240930",
+{%- endif %}
+        "huggingface-hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=5 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs={{ concurrency }},
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+{%- if "faster-whisper" in spec.model_id | lower %}
+        from faster_whisper import WhisperModel
+        self.model = WhisperModel("large-v3", device="cuda", compute_type="int8")
+{%- elif "canary" in spec.name %}
+        import nemo.collections.asr as nemo_asr
+        self.model = nemo_asr.models.ASRModel.from_pretrained("nvidia/canary-1b").to("cuda")
+{%- else %}
+        import whisper
+        model_size = "large-v3-turbo" if "turbo" in MODEL_ID else "large-v3"
+        self.model = whisper.load_model(model_size, device="cuda")
+{%- endif %}
+
+    @modal.web_endpoint(method="POST")
+    def transcribe(self, file: bytes):
+        import tempfile
+        from fastapi.responses import JSONResponse
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(file)
+            f.flush()
+{%- if "faster-whisper" in spec.model_id | lower %}
+            segments, info = self.model.transcribe(f.name, beam_size=5)
+            text = " ".join(s.text for s in segments)
+            return JSONResponse({"text": text, "language": info.language})
+{%- elif "canary" in spec.name %}
+            result = self.model.transcribe([f.name])
+            return JSONResponse({"text": result[0] if result else ""})
+{%- else %}
+            result = self.model.transcribe(f.name)
+            return JSONResponse({"text": result["text"], "language": result.get("language", "")})
+{%- endif %}
+
+    @modal.web_endpoint(method="GET")
+    def health(self):
+        return {"status": "ok", "model": MODEL_ID}

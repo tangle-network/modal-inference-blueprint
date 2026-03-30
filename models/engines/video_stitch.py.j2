@@ -1,0 +1,55 @@
+"""Video stitching — concatenate multiple videos via ffmpeg."""
+import modal, os, tempfile, subprocess, time, traceback, shutil
+
+app = modal.App("inference-{{ spec.name }}")
+
+image = modal.Image.debian_slim(python_version="3.11").apt_install("ffmpeg").pip_install("fastapi", "uvicorn")
+
+@app.cls(image=image, cpu=2, memory=4096, timeout=600, container_idle_timeout={{ idle }}, allow_concurrent_inputs=10)
+class Inference:
+    @modal.asgi_app()
+    def web_app(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse, Response
+        api = FastAPI()
+
+        @api.get("/health")
+        def health():
+            return {"status": "ok", "model": "ffmpeg-stitch", "features": ["stitch", "concat", "fade"]}
+
+        @api.post("{{ spec.endpoint_path }}")
+        async def stitch(request: Request):
+            start = time.time()
+            try:
+                body = await request.json()
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": str(e)})
+            video_urls = body.get("video_urls", [])
+            if len(video_urls) < 2:
+                return JSONResponse(status_code=400, content={"error": "At least 2 video URLs required"})
+            tmp = tempfile.mkdtemp()
+            try:
+                inputs = []
+                for i, url in enumerate(video_urls):
+                    path = os.path.join(tmp, f"in_{i}.mp4")
+                    subprocess.run(["ffmpeg", "-y", "-i", url, "-c", "copy", path],
+                                   capture_output=True, timeout=120)
+                    inputs.append(path)
+                concat_file = os.path.join(tmp, "list.txt")
+                with open(concat_file, "w") as f:
+                    for p in inputs:
+                        f.write(f"file '{p}'\n")
+                output = os.path.join(tmp, "output.mp4")
+                subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
+                                "-c", "copy", output], capture_output=True, timeout=300, check=True)
+                with open(output, "rb") as f:
+                    video_bytes = f.read()
+                return Response(content=video_bytes, media_type="video/mp4",
+                    headers={"X-Generation-Time": f"{time.time()-start:.3f}"})
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={"error": str(e)})
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+        return api

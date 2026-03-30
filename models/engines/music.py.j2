@@ -1,0 +1,76 @@
+"""{{ spec.name }} — {{ spec.model_id }} — music generation."""
+import modal
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .apt_install("ffmpeg", "libsndfile1")
+    .pip_install(
+        "torch==2.5.1", "torchaudio==2.5.1", "transformers>=4.44.0",
+        "diffusers>=0.31.0", "accelerate>=1.0.0", "safetensors>=0.4.0",
+        "soundfile", "numpy",
+        "huggingface-hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=10 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs=2,
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+{%- if "stable-audio" in spec.model_id | lower %}
+        from diffusers import StableAudioPipeline
+        self.pipe = StableAudioPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float16).to("cuda")
+        self.sr = 44100
+{%- else %}
+        from transformers import AutoProcessor, MusicgenForConditionalGeneration
+        self.processor = AutoProcessor.from_pretrained(MODEL_ID)
+        self.model = MusicgenForConditionalGeneration.from_pretrained(MODEL_ID, torch_dtype=torch.float16).to("cuda")
+        self.sr = self.model.config.audio_encoder.sampling_rate
+{%- endif %}
+
+    @modal.web_endpoint(method="POST")
+    def generate(self, request: dict):
+        import io, base64, soundfile as sf, torch
+        from fastapi.responses import JSONResponse
+        prompt = request.get("prompt", "")
+        duration = request.get("duration", 10.0)
+        steps = request.get("num_inference_steps", 100)
+        seed = request.get("seed")
+        generator = torch.Generator("cuda").manual_seed(seed) if seed else None
+{%- if "stable-audio" in spec.model_id | lower %}
+        audio = self.pipe(prompt=prompt, num_inference_steps=steps,
+            audio_end_in_s=duration, generator=generator).audios[0]
+{%- else %}
+        inputs = self.processor(text=[prompt], padding=True, return_tensors="pt").to("cuda")
+        max_tokens = int(duration * 50)
+        audio_values = self.model.generate(**inputs, max_new_tokens=max_tokens)
+        audio = audio_values[0, 0].cpu().numpy()
+{%- endif %}
+        buf = io.BytesIO()
+        sf.write(buf, audio, self.sr, format="WAV")
+        buf.seek(0)
+        return JSONResponse({"created": __import__("time").time(),
+            "data": [{"b64_json": base64.b64encode(buf.read()).decode(), "content_type": "audio/wav"}]})
+
+    @modal.web_endpoint(method="GET")
+    def health(self):
+        return {"status": "ok", "model": MODEL_ID}

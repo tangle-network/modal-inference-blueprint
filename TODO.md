@@ -1,13 +1,13 @@
 # modal-inference-blueprint — Remaining Work
 
-## Done ✅
+## Done
 - [x] Rust workspace + operator crate (lib + bin pattern)
 - [x] BlueprintRunner wiring (main.rs)
 - [x] Router with generic InferenceJob (lib.rs)
 - [x] Axum HTTP server with OpenAI-compatible endpoints (server.rs)
 - [x] Modal proxy — routes requests to operator's Modal endpoints (proxy.rs)
 - [x] Prometheus metrics + on-chain metric pairs (metrics.rs)
-- [x] Auto-registration with ph0ny marketplace (registry.rs)
+- [x] Auto-registration with gateway marketplace (registry.rs)
 - [x] TOML config for models, pricing, QoS (config.rs)
 - [x] VoiceInferenceBSM.sol — inherits BlueprintServiceManagerBase
 - [x] SlashingLib integration (propose → dispute → execute/cancel)
@@ -15,6 +15,7 @@
 - [x] Heartbeat config (50 blocks, 3 missed threshold)
 - [x] Foundry project with tnt-core 0.10.4 + OpenZeppelin 5.1.0
 - [x] Compiles clean against blueprint-sdk main branch
+- [x] Model registry — 24 video + 10 TTS + 4 STT + text/image/music models
 
 ## Remaining
 
@@ -34,13 +35,11 @@
 - [ ] Verify against Tangle testnet
 
 ### Infrastructure
-- [ ] Extract `infra/ingest/modal/` into standalone `modal-apps` repo
-- [ ] Publish blueprint to GitHub (ph0ny/modal-inference-blueprint)
 - [ ] CI: cargo test + cargo clippy + forge test
 - [ ] Docker image for operators who don't want to build from source
-- [ ] Example configs for popular models (CosyVoice, Whisper, Pyannote)
+- [ ] Example configs for popular models (CosyVoice, Whisper, Hallo3)
 
-### Integration with ph0ny Gateway
+### Integration with Gateway
 - [ ] Gateway scrapes operator `/metrics` endpoint
 - [ ] Gateway reads on-chain operator reputation from BSM
 - [ ] Gateway routes to operators based on reputation score

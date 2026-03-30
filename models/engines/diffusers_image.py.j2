@@ -1,0 +1,68 @@
+"""{{ spec.name }} — {{ spec.model_id }} via diffusers image generation."""
+import modal, io
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .pip_install(
+        "torch==2.5.1", "diffusers>=0.31.0", "transformers>=4.44.0",
+        "accelerate>=1.0.0", "safetensors>=0.4.0", "sentencepiece",
+        "protobuf", "huggingface-hub[hf_transfer]>=0.25.0", "Pillow",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=5 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs={{ concurrency }},
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+        from diffusers import {{ pipeline_cls }}
+        self.pipe = {{ pipeline_cls }}.from_pretrained(
+            MODEL_ID, torch_dtype=torch.float16, cache_dir="/root/.cache/huggingface",
+        ).to("cuda")
+
+    @modal.web_endpoint(method="POST")
+    def generate(self, request: dict):
+        import torch, base64
+        from fastapi.responses import JSONResponse
+        prompt = request.get("prompt", "")
+        negative_prompt = request.get("negative_prompt", "")
+        width = request.get("width", 1024)
+        height = request.get("height", 1024)
+        steps = request.get("num_inference_steps", 28)
+        guidance = request.get("guidance_scale", 7.0)
+        seed = request.get("seed")
+        n = request.get("n", 1)
+        generator = torch.Generator("cuda").manual_seed(seed) if seed else None
+        images = []
+        for _ in range(n):
+            result = self.pipe(prompt=prompt, negative_prompt=negative_prompt or None,
+                width=width, height=height, num_inference_steps=steps,
+                guidance_scale=guidance, generator=generator)
+            img = result.images[0]
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            images.append(base64.b64encode(buf.getvalue()).decode())
+        return JSONResponse({"created": __import__("time").time(), "data": [{"b64_json": b} for b in images]})
+
+    @modal.web_endpoint(method="GET")
+    def health(self):
+        return {"status": "ok", "model": MODEL_ID}

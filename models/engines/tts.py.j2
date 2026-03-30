@@ -1,0 +1,100 @@
+"""{{ spec.name }} — {{ spec.model_id }} — text-to-speech."""
+import modal
+
+app = modal.App("inference-{{ spec.name }}")
+MODEL_ID = "{{ spec.model_id }}"
+
+image = (
+    modal.Image.from_registry("{{ spec.modal_image }}")
+    .apt_install("ffmpeg", "libsndfile1")
+    .pip_install(
+        "torch==2.5.1", "torchaudio==2.5.1", "transformers>=4.44.0",
+        "accelerate>=1.0.0", "safetensors>=0.4.0",
+{%- if "kokoro" in spec.name %}
+        "kokoro>=0.9.0",
+{%- elif "f5" in spec.name %}
+        "f5-tts>=0.4.0",
+{%- elif "parler" in spec.name %}
+        "parler-tts>=0.2.0",
+{%- endif %}
+        "soundfile", "numpy",
+        "huggingface-hub[hf_transfer]>=0.25.0",
+        "fastapi", "uvicorn",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
+
+MINUTES = 60
+
+@app.cls(
+    image=image,
+    gpu="{{ gpu_class }}",
+    timeout=5 * MINUTES,
+    container_idle_timeout={{ idle }},
+    allow_concurrent_inputs={{ concurrency }},
+    volumes={
+        "/root/.cache/huggingface": modal.Volume.from_name(
+            "hf-cache-{{ spec.name }}", create_if_missing=True
+        ),
+    },
+)
+class Inference:
+    @modal.enter()
+    def load(self):
+        import torch
+{%- if "kokoro" in spec.name %}
+        from kokoro import KPipeline
+        self.pipeline = KPipeline(lang_code="a")
+{%- elif "f5" in spec.name %}
+        from f5_tts.api import F5TTS
+        self.model = F5TTS()
+{%- elif "parler" in spec.name %}
+        from parler_tts import ParlerTTSForConditionalGeneration
+        from transformers import AutoTokenizer
+        self.model = ParlerTTSForConditionalGeneration.from_pretrained(MODEL_ID, torch_dtype=torch.float16).to("cuda")
+        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+{%- else %}
+        from transformers import AutoProcessor, AutoModel
+        self.processor = AutoProcessor.from_pretrained(MODEL_ID)
+        self.model = AutoModel.from_pretrained(MODEL_ID, torch_dtype=torch.float16).to("cuda")
+{%- endif %}
+
+    @modal.web_endpoint(method="POST")
+    def synthesize(self, request: dict):
+        import io, soundfile as sf
+        from fastapi.responses import Response
+        text = request.get("text", request.get("input", ""))
+{%- if "kokoro" in spec.name %}
+        voice = request.get("voice", "af_heart")
+        import numpy as np
+        audio_chunks = []
+        for _, _, audio in self.pipeline(text, voice=voice):
+            audio_chunks.append(audio)
+        audio = np.concatenate(audio_chunks)
+        sr = 24000
+{%- elif "f5" in spec.name %}
+        ref_audio = request.get("ref_audio_path", None)
+        ref_text = request.get("ref_text", "")
+        audio, sr, _ = self.model.infer(ref_file=ref_audio or "", ref_text=ref_text, gen_text=text)
+{%- elif "parler" in spec.name %}
+        description = request.get("voice", "A female speaker with a warm, clear voice.")
+        input_ids = self.tokenizer(description, return_tensors="pt").input_ids.to("cuda")
+        prompt_ids = self.tokenizer(text, return_tensors="pt").input_ids.to("cuda")
+        generation = self.model.generate(input_ids=input_ids, prompt_input_ids=prompt_ids)
+        audio = generation.cpu().numpy().squeeze()
+        sr = self.model.config.sampling_rate
+{%- else %}
+        inputs = self.processor(text=text, return_tensors="pt").to("cuda")
+        audio_tensor = self.model.generate(**inputs)
+        audio = audio_tensor.cpu().numpy().squeeze()
+        sr = 24000
+{%- endif %}
+        buf = io.BytesIO()
+        sf.write(buf, audio, sr, format="WAV")
+        buf.seek(0)
+        return Response(content=buf.read(), media_type="audio/wav")
+
+    @modal.web_endpoint(method="GET")
+    def health(self):
+        return {"status": "ok", "model": MODEL_ID}
