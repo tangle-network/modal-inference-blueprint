@@ -1,7 +1,7 @@
 name = "Local Operator — Real Modal"
 
 [gateway]
-url = "https://ph0nyvoice-api-production.up.railway.app"
+url = "https://api.gateway.tangle.tools"
 
 [tangle]
 blueprint_id = 1
@@ -28,7 +28,7 @@ idle_check_interval_minutes = 5
 [[models]]
 name = "whisper-modal"
 type = "stt"
-modal_endpoint = "https://drewstone--phony-voice-voiceservice-web-app.modal.run"
+modal_endpoint = "https://your-org--inference-whisper-large-v3-inference.modal.run"
 price_per_1k = "0.006"
 health_path = "/health"
 inference_path = "/transcribe"
@@ -36,7 +36,7 @@ inference_path = "/transcribe"
 [[models]]
 name = "chatterbox-tts"
 type = "tts"
-modal_endpoint = "https://drewstone--phony-chatterbox-tts-chatterboxservice-web-app.modal.run"
+modal_endpoint = "https://your-org--inference-chatterbox-tts-inference.modal.run"
 price_per_1k = "0.008"
 health_path = "/health"
 inference_path = "/synthesize"

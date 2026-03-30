@@ -1,7 +1,7 @@
 //! Modal proxy — routes requests to operator's Modal deployments.
 //!
 //! This is the core of the blueprint: a secure, metered proxy that sits between
-//! the ph0ny Gateway and the operator's Modal-hosted models.
+//! the Tangle Gateway and the operator's Modal-hosted models.
 
 use crate::config::ModelEndpoint;
 use crate::metrics;

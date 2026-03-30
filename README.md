@@ -1,31 +1,31 @@
 # Modal Inference Blueprint
 
-A Tangle Blueprint for serving voice AI models through the ph0ny Gateway. Operators deploy Modal apps (TTS, STT, diarization, etc.) and run this blueprint to earn revenue.
+A Tangle Blueprint for serving voice AI models through the Tangle Gateway. Operators deploy Modal apps (TTS, STT, diarization, etc.) and run this blueprint to earn revenue.
 
 ## What This Does
 
 ```
 You (operator) deploy:
-1. Modal apps (any of the 32 ph0ny voice model scripts)
+1. Modal apps (any of the 32 the gateway voice model scripts)
 2. This blueprint (Rust binary)
 
 The blueprint handles:
 - Tangle network registration + heartbeat
 - OpenAI-compatible HTTP proxy
 - Prometheus metrics + on-chain reputation
-- Auto-registration with ph0ny marketplace
-- Revenue: you earn 80%, ph0ny takes 20%
+- Auto-registration with Tangle marketplace
+- Revenue: you earn 80%, the gateway takes 20%
 ```
 
 ## Quick Start
 
 ```bash
 # 1. Deploy a Modal voice model
-cd /path/to/ph0ny/infra/ingest/modal
+cd /path/to/the gateway/infra/ingest/modal
 modal deploy cosyvoice3_service.py
 
 # 2. Clone this blueprint
-git clone https://github.com/ph0ny/modal-inference-blueprint
+git clone https://github.com/the gateway/modal-inference-blueprint
 cd modal-inference-blueprint
 
 # 3. Configure
@@ -46,8 +46,8 @@ cargo tangle blueprint deploy
 
 ```
                         ┌─────────────────────────┐
-Developer request ────→ │    ph0ny Gateway         │
-                        │    api.ph0ny.com          │
+Developer request ────→ │    Tangle Gateway         │
+                        │    api.gateway.tangle.tools          │
                         └──────────┬──────────────┘
                                    │ routes to operator
                                    ▼
@@ -68,7 +68,7 @@ Developer request ────→ │    ph0ny Gateway         │
 
 ## Supported Models
 
-Any of the 32 ph0ny Modal scripts:
+Any of the 32 the gateway Modal scripts:
 
 | Category | Models |
 |----------|--------|
@@ -120,10 +120,10 @@ The blueprint sends heartbeats to Tangle every 30 seconds and submits metrics on
 
 ## Revenue
 
-- Developers pay ph0ny (credits or Stripe)
-- ph0ny routes requests to you
+- Developers pay the gateway (credits or Stripe)
+- the gateway routes requests to you
 - You earn **80%** of the per-request revenue
-- ph0ny takes **20%** platform fee
+- the gateway takes **20%** platform fee
 - Monthly payout via Stripe Connect or on-chain
 
 ## SDK Crates Used

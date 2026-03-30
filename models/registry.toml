@@ -1761,7 +1761,7 @@ price_per_m_tokens = 0.005
 notes = "568M cross-encoder reranker. Multilingual."
 
 # =============================================================================
-# ADDITIONAL MODELS — from ph0ny production (not yet in categories above)
+# ADDITIONAL MODELS — from the gateway production (not yet in categories above)
 # =============================================================================
 
 [[models]]

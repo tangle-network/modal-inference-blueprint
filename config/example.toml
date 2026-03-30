@@ -2,11 +2,11 @@
 #
 # Copy to config/operator.toml and customize.
 
-name = "My Voice Operator"
+name = "My Inference Operator"
 
 [gateway]
-url = "https://api.ph0ny.com"
-# api_key = "plabs_..."     # Get from ph0ny.com/keys
+url = "https://api.gateway.tangle.tools"
+# api_key = "plabs_..."     # Get from the gateway dashboard
 # payout_email = "me@example.com"
 
 [tangle]
@@ -29,29 +29,24 @@ idle_shutdown_minutes = 30   # Stop Modal apps after 30min idle (0 = disabled)
 idle_check_interval_minutes = 5
 
 # ──────────────────────────────────────────────────────────
-# Models — add one [[models]] block per Modal deployment
+# Models — add one [[models]] block per Modal deployment.
+# Use `python models/deploy.py gen-config --org your-org` to generate these.
 # ──────────────────────────────────────────────────────────
 
 [[models]]
-name = "cosyvoice3"
+name = "kokoro-tts"
 type = "tts"
-modal_endpoint = "https://your-org--cosyvoice3-service.modal.run"
-price_per_1k = "0.005"
+modal_endpoint = "https://your-org--inference-kokoro-tts-inference.modal.run"
+price_per_1k = "0.001"
 
 # [[models]]
-# name = "fish-s2-pro"
-# type = "tts"
-# modal_endpoint = "https://your-org--fish-s2-service.modal.run"
-# price_per_1k = "0.008"
+# name = "llama-4-maverick"
+# type = "text-generation"
+# modal_endpoint = "https://your-org--inference-llama-4-maverick-serve.modal.run"
+# price_per_1k = "0.0003"
 
 # [[models]]
-# name = "pyannote"
-# type = "diarize"
-# modal_endpoint = "https://your-org--pyannote-service.modal.run"
-# price_per_1k = "0.005"
-
-# [[models]]
-# name = "whisper-large-v3"
-# type = "stt"
-# modal_endpoint = "https://your-org--distil-whisper-service.modal.run"
-# price_per_1k = "0.003"
+# name = "hallo3"
+# type = "video-avatar"
+# modal_endpoint = "https://your-org--inference-hallo3-inference.modal.run"
+# price_per_1k = "40"
