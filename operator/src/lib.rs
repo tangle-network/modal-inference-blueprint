@@ -10,6 +10,7 @@
 //!
 //! The blueprint doesn't run models — it proxies to Modal deployments.
 
+pub mod billing;
 pub mod config;
 pub mod idle;
 pub mod metrics;
@@ -27,6 +28,7 @@ use blueprint_sdk::tangle::extract::{TangleArg, TangleResult};
 use blueprint_sdk::tangle::layers::TangleLayer;
 use std::sync::Arc;
 
+use crate::billing::{BillingClient, NonceStore};
 use crate::config::OperatorConfig;
 use crate::idle::IdleManager;
 use crate::proxy::ModelRegistry;
@@ -132,11 +134,64 @@ impl BackgroundService for ModalInferenceServer {
                 None
             };
 
+            // Initialize billing client when billing is required
+            let (billing, operator_address) = if config.billing.required {
+                match BillingClient::new(config.clone()).await {
+                    Ok(client) => {
+                        let addr = client.operator_address();
+                        tracing::info!(operator = %addr, "Billing enabled");
+                        (Some(Arc::new(client)), Some(addr))
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to initialize BillingClient — billing disabled");
+                        (None, None)
+                    }
+                }
+            } else {
+                tracing::info!("Billing disabled (billing.required = false)");
+                (None, None)
+            };
+
+            let nonce_store = Arc::new(NonceStore::load(
+                config.billing.nonce_store_path.clone(),
+            ));
+
             let state = Arc::new(AppState {
                 registry,
                 config: (*config).clone(),
                 idle_manager: idle_mgr,
+                billing,
+                nonce_store,
+                operator_address,
             });
+
+            // Background health check loop — probes all Modal endpoints periodically
+            {
+                let state_clone = state.clone();
+                let interval_secs = config.qos.metrics_interval_secs.max(30);
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(
+                        std::time::Duration::from_secs(interval_secs),
+                    );
+                    loop {
+                        interval.tick().await;
+                        let results = state_clone.registry.health_check_all().await;
+                        let healthy = results.iter().filter(|r| r.status == "ok").count();
+                        let total = results.len();
+                        if healthy < total {
+                            tracing::warn!(healthy, total, "Health check: some models unhealthy");
+                            for r in &results {
+                                if r.status != "ok" {
+                                    tracing::warn!(model = %r.name, status = %r.status, "Model unhealthy");
+                                }
+                            }
+                        } else {
+                            tracing::debug!(healthy, total, "Health check: all models OK");
+                        }
+                    }
+                });
+                tracing::info!(interval_secs, "Background health check loop started");
+            }
 
             let app = build_router(state);
             let addr = format!("{}:{}", config.server.host, config.server.port);

@@ -19,9 +19,14 @@ pub async fn register_with_gateway(config: &OperatorConfig) -> anyhow::Result<()
             "endpointUrl": model.modal_endpoint,
             "description": format!("Operated by {}", config.name),
             "pricingModel": match model.task_type.as_str() {
-                "tts" | "clone" | "enhance" => "per-character",
-                "stt" | "diarize" | "translate" | "vad" => "per-minute",
-                _ => "per-character",
+                "tts" | "clone" | "voice-design" => "per-character",
+                "stt" | "diarize" | "translate" | "vad" | "s2s" | "speakerid" | "langid" => "per-second-audio",
+                "video-generation" | "video-avatar" | "video-lipsync" | "video-understanding" => "per-second-video",
+                "image-generation" => "per-image",
+                "music-generation" => "per-second-music",
+                "video-stitch" | "audio-processing" | "voice-conversion" | "enhance" => "per-job",
+                "text-generation" | "embedding" | "rerank" => "per-million-tokens",
+                _ => "per-job",
             },
             "payoutEmail": config.gateway.payout_email,
         });

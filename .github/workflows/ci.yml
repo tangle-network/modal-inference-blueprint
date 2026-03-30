@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  rust:
+    name: Rust (clippy + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+
+  forge:
+    name: Forge (build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+      - working-directory: contracts
+        run: forge build
+      - working-directory: contracts
+        run: forge test -vvv
+
+  registry:
+    name: Registry Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install click jinja2
+      - name: Parse registry
+        run: python3 -c "import tomllib; f=open('models/registry.toml','rb'); d=tomllib.load(f); print(f'{len(d[\"models\"])} models OK')"
+      - name: Dry-run deploy all models
+        run: python3 models/deploy.py deploy --all --org ci-test --dry-run --out-dir /tmp/ci-apps
+      - name: Syntax-check generated apps
+        run: python3 -c "import py_compile,os; [py_compile.compile(f'/tmp/ci-apps/{f}',doraise=True) for f in os.listdir('/tmp/ci-apps') if f.endswith('.py')]"
