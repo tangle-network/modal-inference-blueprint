@@ -6414,6 +6414,8 @@ dependencies = [
  "config",
  "dotenvy",
  "futures-util",
+ "hex",
+ "k256",
  "prometheus 0.13.4",
  "reqwest",
  "rust_decimal",

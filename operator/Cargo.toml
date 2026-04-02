@@ -13,7 +13,7 @@ name = "modal-operator"
 path = "src/main.rs"
 
 [dependencies]
-blueprint-sdk = { workspace = true }
+blueprint-sdk = { workspace = true, features = ["tee"] }
 blueprint-qos = { workspace = true }
 alloy = { workspace = true }
 alloy-sol-types = { workspace = true }
@@ -50,6 +50,8 @@ tokio-stream = { workspace = true }
 bytes = "1"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+hex = "0.4"
+k256 = { version = "0.13", features = ["ecdsa"] }
 
 [dev-dependencies]
 blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", branch = "main", features = ["testing", "tangle"] }

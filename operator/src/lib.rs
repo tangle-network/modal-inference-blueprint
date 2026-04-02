@@ -62,7 +62,7 @@ pub const INFERENCE_JOB: u8 = 0;
 /// The model field in the request determines which Modal endpoint to hit.
 pub fn router() -> Router {
     Router::new()
-        .route(INFERENCE_JOB, run_inference.layer(TangleLayer))
+        .route(INFERENCE_JOB, run_inference.layer(TangleLayer).layer(blueprint_sdk::tee::TeeLayer::new()))
 }
 
 /// Generic inference job handler.

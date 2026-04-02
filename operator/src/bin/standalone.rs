@@ -3,6 +3,7 @@
 //!
 //! Usage: cargo run --bin standalone
 
+use modal_inference::billing::{BillingClient, NonceStore};
 use modal_inference::config::OperatorConfig;
 use modal_inference::idle::IdleManager;
 use modal_inference::metrics;
@@ -46,10 +47,33 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Initialize billing client when billing.required is set
+    let (billing, operator_address) = if config.billing.required {
+        match BillingClient::new(Arc::new(config.clone())).await {
+            Ok(client) => {
+                let addr = client.operator_address();
+                tracing::info!(operator = %addr, "Billing enabled");
+                (Some(Arc::new(client)), Some(addr))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to initialize BillingClient — billing disabled");
+                (None, None)
+            }
+        }
+    } else {
+        tracing::info!("Billing disabled (billing.required = false)");
+        (None, None)
+    };
+
+    let nonce_store = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
+
     let state = Arc::new(AppState {
         registry,
         config: config.clone(),
         idle_manager: idle_mgr,
+        billing,
+        nonce_store,
+        operator_address,
     });
 
     // Metrics reporting loop (logs metrics periodically, simulates on-chain submission)
