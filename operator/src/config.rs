@@ -1,7 +1,7 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::fmt;
+use blueprint_std::path::PathBuf;
+use blueprint_std::fmt;
 
 /// A single Modal model endpoint that this operator serves.
 #[derive(Debug, Clone, Serialize, Deserialize)]

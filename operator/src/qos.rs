@@ -11,8 +11,8 @@
 use crate::metrics;
 use blueprint_qos::heartbeat::{HeartbeatConsumer, HeartbeatStatus, MetricsSource};
 use blueprint_qos::error::Result;
-use std::future::Future;
-use std::pin::Pin;
+use blueprint_std::future::Future;
+use blueprint_std::pin::Pin;
 
 /// Bridges our Prometheus/atomic metrics to the QoS on-chain submission.
 pub struct OperatorMetricsSource;
