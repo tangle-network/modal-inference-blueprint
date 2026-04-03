@@ -18,7 +18,7 @@ use axum::{
 use bytes::Bytes;
 use alloy::primitives::Address;
 use serde::Deserialize;
-use blueprint_std::sync::Arc;
+use blueprint_sdk::std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 

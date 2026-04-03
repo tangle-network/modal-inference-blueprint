@@ -26,7 +26,7 @@ use blueprint_sdk::router::Router;
 use blueprint_sdk::runner::BackgroundService;
 use blueprint_sdk::tangle::extract::{TangleArg, TangleResult};
 use blueprint_sdk::tangle::layers::TangleLayer;
-use blueprint_std::sync::Arc;
+use blueprint_sdk::std::sync::Arc;
 
 use crate::billing::{BillingClient, NonceStore};
 use crate::config::OperatorConfig;

@@ -8,9 +8,9 @@ use crate::metrics;
 use anyhow::Result;
 use bytes::Bytes;
 use reqwest::Client;
-use blueprint_std::collections::HashMap;
-use blueprint_std::sync::Arc;
-use blueprint_std::time::Instant;
+use blueprint_sdk::std::collections::HashMap;
+use blueprint_sdk::std::sync::Arc;
+use blueprint_sdk::std::time::Instant;
 use tracing::{error, info, warn};
 
 /// Model registry — maps model names to their Modal endpoints.

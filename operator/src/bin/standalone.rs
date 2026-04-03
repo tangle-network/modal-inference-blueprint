@@ -9,7 +9,7 @@ use modal_inference::idle::IdleManager;
 use modal_inference::metrics;
 use modal_inference::proxy::ModelRegistry;
 use modal_inference::server::{build_router, AppState};
-use blueprint_std::sync::Arc;
+use blueprint_sdk::std::sync::Arc;
 
 fn setup_log() {
     use tracing_subscriber::{fmt, EnvFilter};
