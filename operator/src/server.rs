@@ -10,9 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    body::Body,
     extract::{Json, Multipart, Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -23,9 +22,7 @@ use tokio::task::JoinHandle;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 
-use tangle_inference_core::server::{
-    error_response, extract_x402_spend_auth, payment_required, settle_billing, validate_spend_auth,
-};
+use tangle_inference_core::server::{billing_gate, error_response, metrics_handler, settle_billing};
 use tangle_inference_core::{
     AppState, CostModel, CostParams, FlatRequestCostModel, PerCharCostModel, PerImageCostModel,
     PerSecondCostModel, PerTokenCostModel, SpendAuthPayload, TaskTypeCostModel,
@@ -158,7 +155,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/embeddings", post(embeddings))
         .route("/proxy/:model/*path", post(proxy_raw))
         .route("/health", get(health))
-        .route("/metrics", get(prom_metrics))
+        .route("/metrics", get(metrics_handler))
         .route("/models", get(list_models))
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -205,56 +202,6 @@ fn backend_from(state: &AppState) -> &ModalBackend {
         .expect("AppState backend is ModalBackend")
 }
 
-// ---------------------------------------------------------------------------
-// Shared billing gate for task-aware handlers
-// ---------------------------------------------------------------------------
-
-/// Handles the full billing gate: extract SpendAuth (body > x402 header),
-/// validate it, and pre-authorize on-chain. Returns the pre-auth amount or
-/// an error response.
-async fn billing_gate(
-    state: &AppState,
-    headers: &HeaderMap,
-    body_spend_auth: Option<SpendAuthPayload>,
-    task_key: Option<&str>,
-    estimated_cost: u64,
-) -> Result<(Option<SpendAuthPayload>, Option<u64>), Response> {
-    let spend_auth = body_spend_auth.or_else(|| extract_x402_spend_auth(headers));
-
-    if !state.billing_config.billing_required {
-        return Ok((spend_auth, None));
-    }
-
-    let Some(spend_auth) = spend_auth else {
-        let _ = task_key;
-        return Err(payment_required(
-            &state.billing_config,
-            &state.tangle_config,
-            state.operator_address,
-            estimated_cost.max(state.billing_config.min_charge_amount),
-        ));
-    };
-
-    let preauth_amount = match validate_spend_auth(state, &spend_auth).await {
-        Ok(amt) => amt,
-        Err(resp) => return Err(resp),
-    };
-
-    if let Err(e) = state.billing.authorize_spend(&spend_auth).await {
-        tracing::error!(error = %e, "authorizeSpend failed");
-        return Err(error_response(
-            StatusCode::PAYMENT_REQUIRED,
-            format!("billing authorization failed: {e}"),
-            "billing_error",
-            "authorization_failed",
-        ));
-    }
-
-    // NOTE: validate_spend_auth records the nonce internally — no separate insert needed.
-
-    Ok((Some(spend_auth), Some(preauth_amount)))
-}
-
 async fn ensure_model_awake(backend: &ModalBackend, model_name: &str) -> Result<(), Response> {
     if let Some(ref mgr) = backend.idle_manager {
         if !mgr.record_request(model_name).await {
@@ -278,6 +225,63 @@ fn resolve_model<'a>(
 ) -> Option<&'a ModelEndpoint> {
     name.and_then(|n| backend.registry.get(n))
         .or_else(|| backend.registry.list_by_type(fallback_task).into_iter().next())
+}
+
+/// Wake model, proxy request, settle billing, return response.
+/// `actual_cost_params` lets the caller override the settle cost (e.g. when
+/// actual usage is known from the response). When `None`, `estimated_cost` is
+/// used for settlement.
+async fn proxy_and_settle(
+    state: &AppState,
+    backend: &ModalBackend,
+    model_name: &str,
+    path: Option<&str>,
+    payload: Bytes,
+    content_type: &str,
+    spend_auth: &Option<SpendAuthPayload>,
+    preauth_amount: Option<u64>,
+    actual_cost: u64,
+) -> Response {
+    if let Err(r) = ensure_model_awake(backend, model_name).await {
+        return r;
+    }
+
+    match backend
+        .registry
+        .proxy_request(model_name, path, payload, content_type)
+        .await
+    {
+        Ok(resp) => {
+            if let (Some(ref sa), Some(preauth)) = (spend_auth, preauth_amount) {
+                if let Err(e) = settle_billing(&state.billing, sa, preauth, actual_cost).await {
+                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
+                }
+            }
+            (
+                StatusCode::OK,
+                [("content-type", resp.content_type.as_str())],
+                resp.data,
+            )
+                .into_response()
+        }
+        Err(e) => error_response(
+            StatusCode::BAD_GATEWAY,
+            format!("Proxy error: {e}"),
+            "upstream_error",
+            "modal_error",
+        ),
+    }
+}
+
+fn json_payload(value: &serde_json::Value) -> Result<Bytes, Response> {
+    serde_json::to_vec(value).map(Bytes::from).map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize payload: {e}"),
+            "internal_error",
+            "serialize_failed",
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -360,83 +364,41 @@ async fn synthesize(
 ) -> Response {
     let backend = backend_from(&state);
     let Some(model) = resolve_model(backend, body.model.as_deref(), "tts") else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "No TTS model configured".into(),
-            "invalid_request_error",
-            "no_model",
-        );
+        return error_response(StatusCode::BAD_REQUEST, "No TTS model configured".into(), "invalid_request_error", "no_model");
     };
 
     let chars = body.input.len() as u64;
-    let estimated_cost = backend.calculate_cost(&CostParams {
+    let cost_params = CostParams {
         task_type: Some("tts".into()),
-        extra: HashMap::from([("characters".into(), chars.max(500))]),
+        extra: HashMap::from([("characters".into(), chars)]),
         ..Default::default()
+    };
+    let estimated_cost = backend.calculate_cost(&CostParams {
+        extra: HashMap::from([("characters".into(), chars.max(500))]),
+        ..cost_params.clone()
     });
 
     let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body.spend_auth, Some("tts"), estimated_cost).await {
+        match billing_gate(&state, &headers, body.spend_auth, estimated_cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
-    if let Err(r) = ensure_model_awake(backend, &model.name).await {
-        return r;
-    }
 
     let payload = serde_json::json!({
         "text": body.input,
         "voice_id": body.voice.as_deref().unwrap_or("default"),
         "format": body.response_format.as_deref().unwrap_or("wav"),
     });
-    let payload_bytes = match serde_json::to_vec(&payload) {
-        Ok(b) => Bytes::from(b),
-        Err(e) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to serialize TTS payload: {e}"),
-                "internal_error",
-                "serialize_failed",
-            );
-        }
+    let payload_bytes = match json_payload(&payload) {
+        Ok(b) => b,
+        Err(r) => return r,
     };
 
-    match backend
-        .registry
-        .proxy_request(&model.name, None, payload_bytes, "application/json")
-        .await
-    {
-        Ok(resp) => {
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
-                let cost = backend.calculate_cost(&CostParams {
-                    task_type: Some("tts".into()),
-                    extra: HashMap::from([("characters".into(), chars)]),
-                    ..Default::default()
-                });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
-            }
-
-            (
-                StatusCode::OK,
-                [
-                    ("content-type", resp.content_type.as_str()),
-                    ("x-model", &model.name),
-                    ("x-latency-ms", &resp.latency_ms.to_string()),
-                ],
-                resp.data,
-            )
-                .into_response()
-        }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
-    }
+    proxy_and_settle(
+        &state, backend, &model.name, None, payload_bytes, "application/json",
+        &spend_auth, preauth_amount, backend.calculate_cost(&cost_params),
+    )
+    .await
 }
 
 /// POST /v1/audio/transcriptions — OpenAI-compatible STT
@@ -453,52 +415,69 @@ async fn transcribe(
 
     while let Ok(Some(field)) = multipart.next_field().await {
         match field.name() {
-            Some("file") => {
-                audio_data = field.bytes().await.ok();
-            }
-            Some("model") => {
-                model_name_field = field.text().await.unwrap_or_default();
-            }
-            Some("spend_auth") => {
-                spend_auth_json = field.text().await.ok();
-            }
+            Some("file") => audio_data = field.bytes().await.ok(),
+            Some("model") => model_name_field = field.text().await.unwrap_or_default(),
+            Some("spend_auth") => spend_auth_json = field.text().await.ok(),
             _ => {}
         }
     }
 
     let Some(audio) = audio_data else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "Missing audio file".into(),
-            "invalid_request_error",
-            "missing_file",
-        );
+        return error_response(StatusCode::BAD_REQUEST, "Missing audio file".into(), "invalid_request_error", "missing_file");
     };
-
     let Some(model) = resolve_model(backend, Some(&model_name_field), "stt") else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "No STT model configured".into(),
-            "invalid_request_error",
-            "no_model",
-        );
+        return error_response(StatusCode::BAD_REQUEST, "No STT model configured".into(), "invalid_request_error", "no_model");
     };
 
-    let audio_len = audio.len();
     // 16kHz mono 16-bit PCM = 32,000 bytes/sec
-    let centiseconds = (audio_len as u64 * 100) / 32000;
+    let centiseconds = (audio.len() as u64 * 100) / 32000;
+    let cost_params = CostParams {
+        task_type: Some("stt".into()),
+        extra: HashMap::from([("centiseconds".into(), centiseconds)]),
+        ..Default::default()
+    };
+    let estimated_cost = backend.calculate_cost(&CostParams {
+        extra: HashMap::from([("centiseconds".into(), centiseconds.max(3000))]),
+        ..cost_params.clone()
+    });
 
     let body_spend_auth: Option<SpendAuthPayload> =
         spend_auth_json.as_deref().and_then(|s| serde_json::from_str(s).ok());
 
+    let (spend_auth, preauth_amount) =
+        match billing_gate(&state, &headers, body_spend_auth, estimated_cost).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        };
+
+    proxy_and_settle(
+        &state, backend, &model.name, None, audio, "audio/wav",
+        &spend_auth, preauth_amount, backend.calculate_cost(&cost_params),
+    )
+    .await
+}
+
+/// POST /v1/chat/completions — needs custom settlement (parses usage from response).
+async fn chat_completions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ChatCompletionRequest>,
+) -> Response {
+    let backend = backend_from(&state);
+    let Some(model) = resolve_model(backend, body.model.as_deref(), "chat") else {
+        return error_response(StatusCode::BAD_REQUEST, "No chat model configured".into(), "invalid_request_error", "no_model");
+    };
+
+    let est_prompt: u32 = body.messages.iter().map(|m| (m.content.len() as u32) / 4 + 1).sum();
     let estimated_cost = backend.calculate_cost(&CostParams {
-        task_type: Some("stt".into()),
-        extra: HashMap::from([("centiseconds".into(), centiseconds.max(3000))]),
+        task_type: Some("chat".into()),
+        prompt_tokens: est_prompt,
+        completion_tokens: body.max_tokens,
         ..Default::default()
     });
 
     let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body_spend_auth, Some("stt"), estimated_cost).await {
+        match billing_gate(&state, &headers, body.spend_auth, estimated_cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
@@ -507,131 +486,36 @@ async fn transcribe(
         return r;
     }
 
-    match backend
-        .registry
-        .proxy_request(&model.name, None, audio, "audio/wav")
-        .await
-    {
-        Ok(resp) => {
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
-                let cost = backend.calculate_cost(&CostParams {
-                    task_type: Some("stt".into()),
-                    extra: HashMap::from([("centiseconds".into(), centiseconds)]),
-                    ..Default::default()
-                });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
-            }
-
-            (
-                StatusCode::OK,
-                [("content-type", "application/json")],
-                resp.data,
-            )
-                .into_response()
-        }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
-    }
-}
-
-/// POST /v1/chat/completions
-async fn chat_completions(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ChatCompletionRequest>,
-) -> Response {
-    let backend = backend_from(&state);
-    let Some(model) = resolve_model(backend, body.model.as_deref(), "chat") else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "No chat model configured".into(),
-            "invalid_request_error",
-            "no_model",
-        );
-    };
-
-    let estimated_prompt_tokens: u32 = body
-        .messages
-        .iter()
-        .map(|m| (m.content.len() as u32) / 4 + 1)
-        .sum();
-    let estimated_cost = backend.calculate_cost(&CostParams {
-        task_type: Some("chat".into()),
-        prompt_tokens: estimated_prompt_tokens,
-        completion_tokens: body.max_tokens,
-        ..Default::default()
-    });
-
-    let (spend_auth, preauth_amount) = match billing_gate(
-        &state,
-        &headers,
-        body.spend_auth,
-        Some("chat"),
-        estimated_cost,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
-
-    if let Err(r) = ensure_model_awake(backend, &model.name).await {
-        return r;
-    }
-
     let payload = serde_json::json!({
         "model": model.name,
-        "messages": body.messages.iter().map(|m| serde_json::json!({
-            "role": m.role,
-            "content": m.content,
-        })).collect::<Vec<_>>(),
+        "messages": body.messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
         "max_tokens": body.max_tokens,
         "temperature": body.temperature,
     });
-    let payload_bytes = match serde_json::to_vec(&payload) {
-        Ok(b) => Bytes::from(b),
-        Err(e) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to serialize chat payload: {e}"),
-                "internal_error",
-                "serialize_failed",
-            );
-        }
+    let payload_bytes = match json_payload(&payload) {
+        Ok(b) => b,
+        Err(r) => return r,
     };
 
-    match backend
-        .registry
-        .proxy_request(&model.name, None, payload_bytes, "application/json")
-        .await
-    {
+    match backend.registry.proxy_request(&model.name, None, payload_bytes, "application/json").await {
         Ok(resp) => {
-            // Parse usage if present.
-            let (prompt_tokens, completion_tokens) =
-                match serde_json::from_slice::<serde_json::Value>(&resp.data) {
-                    Ok(v) => {
-                        let pt =
-                            v.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|x| x.as_u64())
-                                .unwrap_or(estimated_prompt_tokens as u64) as u32;
-                        let ct =
-                            v.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|x| x.as_u64())
-                                .unwrap_or(body.max_tokens as u64) as u32;
-                        (pt, ct)
-                    }
-                    Err(_) => (estimated_prompt_tokens, body.max_tokens),
-                };
+            // Parse actual usage from response for accurate settlement.
+            let (pt, ct) = serde_json::from_slice::<serde_json::Value>(&resp.data)
+                .ok()
+                .and_then(|v| {
+                    let u = v.get("usage")?;
+                    Some((
+                        u.get("prompt_tokens")?.as_u64()? as u32,
+                        u.get("completion_tokens")?.as_u64()? as u32,
+                    ))
+                })
+                .unwrap_or((est_prompt, body.max_tokens));
 
             if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
                 let cost = backend.calculate_cost(&CostParams {
                     task_type: Some("chat".into()),
-                    prompt_tokens,
-                    completion_tokens,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
                     ..Default::default()
                 });
                 if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
@@ -639,19 +523,9 @@ async fn chat_completions(
                 }
             }
 
-            (
-                StatusCode::OK,
-                [("content-type", resp.content_type.as_str())],
-                resp.data,
-            )
-                .into_response()
+            (StatusCode::OK, [("content-type", resp.content_type.as_str())], resp.data).into_response()
         }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
+        Err(e) => error_response(StatusCode::BAD_GATEWAY, format!("Proxy error: {e}"), "upstream_error", "modal_error"),
     }
 }
 
@@ -663,76 +537,28 @@ async fn images_generations(
 ) -> Response {
     let backend = backend_from(&state);
     let Some(model) = resolve_model(backend, body.model.as_deref(), "image") else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "No image model configured".into(),
-            "invalid_request_error",
-            "no_model",
-        );
+        return error_response(StatusCode::BAD_REQUEST, "No image model configured".into(), "invalid_request_error", "no_model");
     };
 
-    let images = body.n.max(1) as u64;
-    let estimated_cost = backend.calculate_cost(&CostParams {
+    let cost = backend.calculate_cost(&CostParams {
         task_type: Some("image".into()),
-        extra: HashMap::from([("images".into(), images)]),
+        extra: HashMap::from([("images".into(), body.n.max(1) as u64)]),
         ..Default::default()
     });
 
-    let (spend_auth, preauth_amount) = match billing_gate(
-        &state,
-        &headers,
-        body.spend_auth,
-        Some("image"),
-        estimated_cost,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (spend_auth, preauth_amount) =
+        match billing_gate(&state, &headers, body.spend_auth, cost).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        };
 
-    if let Err(r) = ensure_model_awake(backend, &model.name).await {
-        return r;
-    }
+    let payload = serde_json::json!({"model": model.name, "prompt": body.prompt, "n": body.n});
+    let payload_bytes = match json_payload(&payload) { Ok(b) => b, Err(r) => return r };
 
-    let payload = serde_json::json!({
-        "model": model.name,
-        "prompt": body.prompt,
-        "n": body.n,
-    });
-    let payload_bytes = Bytes::from(serde_json::to_vec(&payload).unwrap_or_default());
-
-    match backend
-        .registry
-        .proxy_request(&model.name, None, payload_bytes, "application/json")
-        .await
-    {
-        Ok(resp) => {
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
-                let cost = backend.calculate_cost(&CostParams {
-                    task_type: Some("image".into()),
-                    extra: HashMap::from([("images".into(), images)]),
-                    ..Default::default()
-                });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
-            }
-
-            (
-                StatusCode::OK,
-                [("content-type", resp.content_type.as_str())],
-                resp.data,
-            )
-                .into_response()
-        }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
-    }
+    proxy_and_settle(
+        &state, backend, &model.name, None, payload_bytes, "application/json",
+        &spend_auth, preauth_amount, cost,
+    ).await
 }
 
 /// POST /v1/videos/generations
@@ -743,76 +569,28 @@ async fn videos_generations(
 ) -> Response {
     let backend = backend_from(&state);
     let Some(model) = resolve_model(backend, body.model.as_deref(), "video") else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "No video model configured".into(),
-            "invalid_request_error",
-            "no_model",
-        );
+        return error_response(StatusCode::BAD_REQUEST, "No video model configured".into(), "invalid_request_error", "no_model");
     };
 
-    let centiseconds = (body.duration_seconds as u64) * 100;
-    let estimated_cost = backend.calculate_cost(&CostParams {
+    let cost = backend.calculate_cost(&CostParams {
         task_type: Some("video".into()),
-        extra: HashMap::from([("centiseconds".into(), centiseconds)]),
+        extra: HashMap::from([("centiseconds".into(), (body.duration_seconds as u64) * 100)]),
         ..Default::default()
     });
 
-    let (spend_auth, preauth_amount) = match billing_gate(
-        &state,
-        &headers,
-        body.spend_auth,
-        Some("video"),
-        estimated_cost,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (spend_auth, preauth_amount) =
+        match billing_gate(&state, &headers, body.spend_auth, cost).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        };
 
-    if let Err(r) = ensure_model_awake(backend, &model.name).await {
-        return r;
-    }
+    let payload = serde_json::json!({"model": model.name, "prompt": body.prompt, "duration_seconds": body.duration_seconds});
+    let payload_bytes = match json_payload(&payload) { Ok(b) => b, Err(r) => return r };
 
-    let payload = serde_json::json!({
-        "model": model.name,
-        "prompt": body.prompt,
-        "duration_seconds": body.duration_seconds,
-    });
-    let payload_bytes = Bytes::from(serde_json::to_vec(&payload).unwrap_or_default());
-
-    match backend
-        .registry
-        .proxy_request(&model.name, None, payload_bytes, "application/json")
-        .await
-    {
-        Ok(resp) => {
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
-                let cost = backend.calculate_cost(&CostParams {
-                    task_type: Some("video".into()),
-                    extra: HashMap::from([("centiseconds".into(), centiseconds)]),
-                    ..Default::default()
-                });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
-            }
-
-            (
-                StatusCode::OK,
-                [("content-type", resp.content_type.as_str())],
-                resp.data,
-            )
-                .into_response()
-        }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
-    }
+    proxy_and_settle(
+        &state, backend, &model.name, None, payload_bytes, "application/json",
+        &spend_auth, preauth_amount, cost,
+    ).await
 }
 
 /// POST /v1/embeddings
@@ -823,91 +601,37 @@ async fn embeddings(
 ) -> Response {
     let backend = backend_from(&state);
     let Some(model) = resolve_model(backend, body.model.as_deref(), "embedding") else {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "No embedding model configured".into(),
-            "invalid_request_error",
-            "no_model",
-        );
+        return error_response(StatusCode::BAD_REQUEST, "No embedding model configured".into(), "invalid_request_error", "no_model");
     };
 
-    // Estimate tokens as characters/4 across all inputs.
     let approx_chars: u64 = match &body.input {
         serde_json::Value::String(s) => s.len() as u64,
-        serde_json::Value::Array(arr) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.len() as u64))
-            .sum(),
+        serde_json::Value::Array(arr) => arr.iter().filter_map(|v| v.as_str().map(|s| s.len() as u64)).sum(),
         _ => 0,
     };
-    let approx_tokens = (approx_chars / 4).max(1) as u32;
-
-    let estimated_cost = backend.calculate_cost(&CostParams {
+    let cost = backend.calculate_cost(&CostParams {
         task_type: Some("embedding".into()),
-        prompt_tokens: approx_tokens,
+        prompt_tokens: (approx_chars / 4).max(1) as u32,
         ..Default::default()
     });
 
-    let (spend_auth, preauth_amount) = match billing_gate(
-        &state,
-        &headers,
-        body.spend_auth,
-        Some("embedding"),
-        estimated_cost,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (spend_auth, preauth_amount) =
+        match billing_gate(&state, &headers, body.spend_auth, cost).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        };
 
-    if let Err(r) = ensure_model_awake(backend, &model.name).await {
-        return r;
-    }
+    let payload = serde_json::json!({"model": model.name, "input": body.input});
+    let payload_bytes = match json_payload(&payload) { Ok(b) => b, Err(r) => return r };
 
-    let payload = serde_json::json!({
-        "model": model.name,
-        "input": body.input,
-    });
-    let payload_bytes = Bytes::from(serde_json::to_vec(&payload).unwrap_or_default());
-
-    match backend
-        .registry
-        .proxy_request(&model.name, None, payload_bytes, "application/json")
-        .await
-    {
-        Ok(resp) => {
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
-                let cost = backend.calculate_cost(&CostParams {
-                    task_type: Some("embedding".into()),
-                    prompt_tokens: approx_tokens,
-                    ..Default::default()
-                });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
-            }
-
-            (
-                StatusCode::OK,
-                [("content-type", resp.content_type.as_str())],
-                resp.data,
-            )
-                .into_response()
-        }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
-    }
+    proxy_and_settle(
+        &state, backend, &model.name, None, payload_bytes, "application/json",
+        &spend_auth, preauth_amount, cost,
+    ).await
 }
 
 /// POST /proxy/:model/*path — raw proxy to any model endpoint.
-///
-/// SpendAuth is expected via X-Payment-Signature. The model's declared
-/// task_type drives cost calculation via `TaskTypeCostModel`.
+/// SpendAuth via X-Payment-Signature. Task-type drives cost via `TaskTypeCostModel`.
 async fn proxy_raw(
     State(state): State<AppState>,
     Path((model, path)): Path<(String, String)>,
@@ -915,80 +639,36 @@ async fn proxy_raw(
     body: Bytes,
 ) -> Response {
     let backend = backend_from(&state);
-    let model_cfg = backend.registry.get(&model);
-    let task_key = model_cfg
-        .and_then(|m| canonical_task_key(&m.task_type))
-        .unwrap_or("");
+    let task_key = backend.registry.get(&model)
+        .and_then(|m| canonical_task_key(&m.task_type));
 
-    let estimated_cost = if task_key.is_empty() {
-        backend.calculate_cost(&CostParams::default())
-    } else {
+    let settle_cost = backend.calculate_cost(&CostParams {
+        task_type: task_key.map(String::from),
+        extra: HashMap::from([("images".into(), 1)]),
+        ..Default::default()
+    });
+    let estimated_cost = if task_key.is_some() {
         backend.calculate_cost(&CostParams {
-            task_type: Some(task_key.to_string()),
-            extra: HashMap::from([
-                ("images".into(), 1),
-                ("centiseconds".into(), 100),
-                ("characters".into(), 500),
-            ]),
+            task_type: task_key.map(String::from),
+            extra: HashMap::from([("images".into(), 1), ("centiseconds".into(), 100), ("characters".into(), 500)]),
             prompt_tokens: 500,
             completion_tokens: 500,
         })
+    } else {
+        settle_cost
     };
 
-    let (spend_auth, preauth_amount) = match billing_gate(
-        &state,
-        &headers,
-        None,
-        Some(task_key),
-        estimated_cost,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
-
-    if let Err(r) = ensure_model_awake(backend, &model).await {
-        return r;
-    }
+    let (spend_auth, preauth_amount) =
+        match billing_gate(&state, &headers, None, estimated_cost).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        };
 
     let proxy_path = format!("/{path}");
-    match backend
-        .registry
-        .proxy_request(&model, Some(&proxy_path), body, "application/json")
-        .await
-    {
-        Ok(resp) => {
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
-                // Conservative settle: charge the default request cost at minimum,
-                // or the task-type cost model's flat interpretation.
-                let cost = backend.calculate_cost(&CostParams {
-                    task_type: if task_key.is_empty() {
-                        None
-                    } else {
-                        Some(task_key.to_string())
-                    },
-                    extra: HashMap::from([("images".into(), 1)]),
-                    ..Default::default()
-                });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
-            }
-            (
-                StatusCode::OK,
-                [("content-type", resp.content_type.as_str())],
-                resp.data,
-            )
-                .into_response()
-        }
-        Err(e) => error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Proxy error: {e}"),
-            "upstream_error",
-            "modal_error",
-        ),
-    }
+    proxy_and_settle(
+        &state, backend, &model, Some(&proxy_path), body, "application/json",
+        &spend_auth, preauth_amount, settle_cost,
+    ).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1042,28 +722,10 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn prom_metrics() -> Response {
-    let body = tangle_inference_core::metrics::gather();
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            "text/plain; version=0.0.4; charset=utf-8",
-        )
-        .body(Body::from(body))
-        .unwrap_or_else(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to build metrics response: {e}"),
-                "internal_error",
-                "response_build_failed",
-            )
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TangleConfig;
 
     #[test]
     fn test_canonical_task_key() {
