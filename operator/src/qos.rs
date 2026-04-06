@@ -1,51 +1,135 @@
-//! QoS integration — bridges our metrics to the Tangle on-chain heartbeat system.
+//! QoS heartbeat — periodically submits operator metrics to the Tangle chain.
 //!
-//! Implements:
-//! - `MetricsSource`: feeds 13 on-chain metrics into each heartbeat
-//! - `TangleHeartbeatConsumer`: sends heartbeat on-chain
-//!
-//! The HeartbeatService calls get_custom_metrics() on each tick, includes them
-//! in the HeartbeatStatus, signs it, and calls submitHeartbeat() on-chain
-//! via the IOperatorStatusRegistry contract.
+//! Standalone implementation (no blueprint-qos dependency). Sends a lightweight
+//! heartbeat transaction containing on-chain metrics from
+//! `tangle_inference_core::metrics::on_chain_metrics()`.
 
-use crate::metrics;
-use blueprint_qos::heartbeat::{HeartbeatConsumer, HeartbeatStatus, MetricsSource};
-use blueprint_qos::error::Result;
-use blueprint_sdk::std::future::Future;
-use blueprint_sdk::std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
 
-/// Bridges our Prometheus/atomic metrics to the QoS on-chain submission.
-pub struct OperatorMetricsSource;
+use alloy::{
+    network::EthereumWallet,
+    primitives::Address,
+    providers::{Provider, ProviderBuilder},
+    signers::local::PrivateKeySigner,
+    sol,
+};
 
-impl MetricsSource for OperatorMetricsSource {
-    fn get_custom_metrics(&self) -> Pin<Box<dyn Future<Output = Vec<(String, u64)>> + Send + '_>> {
-        Box::pin(async { metrics::on_chain_metrics() })
-    }
+use crate::config::OperatorConfig;
+use tangle_inference_core::metrics;
 
-    fn clear_custom_metrics(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async {
-            // Cumulative counters — BSM contract diffs between submissions.
-        })
+sol! {
+    #[sol(rpc)]
+    interface IOperatorStatusRegistry {
+        struct MetricPair {
+            string key;
+            uint64 value;
+        }
+
+        function submitHeartbeat(
+            uint64 serviceId,
+            uint64 blueprintId,
+            uint64 blockNumber,
+            MetricPair[] calldata metrics
+        ) external;
     }
 }
 
-/// On-chain heartbeat consumer. In practice, the HeartbeatService from
-/// blueprint-qos handles signing + tx submission internally using the
-/// keystore_uri + http_rpc_endpoint. This consumer logs + increments counters.
-pub struct TangleHeartbeatConsumer;
+/// QoS configuration embedded in OperatorConfig.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct QoSConfig {
+    /// Heartbeat interval in seconds. 0 = disabled.
+    #[serde(default)]
+    pub heartbeat_interval_secs: u64,
 
-impl HeartbeatConsumer for TangleHeartbeatConsumer {
-    fn send_heartbeat(
-        &self,
-        status: &HeartbeatStatus,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> {
-        let service_id = status.service_id;
-        let blueprint_id = status.blueprint_id;
-        let block = status.block_number;
-        Box::pin(async move {
-            tracing::info!(service_id, blueprint_id, block, "Heartbeat submitted");
-            metrics::HEARTBEATS_SENT.inc();
-            Ok(())
-        })
+    /// On-chain address of the IOperatorStatusRegistry contract.
+    #[serde(default)]
+    pub status_registry_address: Option<String>,
+}
+
+/// Start the QoS heartbeat loop as a background task.
+pub async fn start_heartbeat(
+    config: Arc<OperatorConfig>,
+) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    let qos = config
+        .qos
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("qos config missing"))?;
+
+    let interval_secs = qos.heartbeat_interval_secs;
+    if interval_secs == 0 {
+        anyhow::bail!("heartbeat disabled (interval = 0)");
     }
+
+    let registry_addr: Address = qos
+        .status_registry_address
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("status_registry_address not configured"))?
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid status_registry_address: {e}"))?;
+
+    let signer: PrivateKeySigner = config.tangle.operator_key.parse()?;
+    let wallet = EthereumWallet::from(signer);
+    let rpc_url: reqwest::Url = config.tangle.rpc_url.parse()?;
+    let service_id = config
+        .tangle
+        .service_id
+        .ok_or_else(|| anyhow::anyhow!("service_id required for QoS heartbeat"))?;
+    let blueprint_id = config.tangle.blueprint_id;
+
+    let handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            match send_heartbeat(&wallet, &rpc_url, registry_addr, service_id, blueprint_id).await
+            {
+                Ok(()) => {
+                    metrics::HEARTBEATS_SENT.inc();
+                    tracing::debug!(service_id, blueprint_id, "heartbeat submitted");
+                }
+                Err(e) => {
+                    metrics::HEARTBEATS_FAILED.inc();
+                    tracing::warn!(
+                        error = %e,
+                        service_id,
+                        blueprint_id,
+                        "heartbeat submission failed"
+                    );
+                }
+            }
+        }
+    });
+
+    Ok(handle)
+}
+
+async fn send_heartbeat(
+    wallet: &EthereumWallet,
+    rpc_url: &reqwest::Url,
+    registry_addr: Address,
+    service_id: u64,
+    blueprint_id: u64,
+) -> anyhow::Result<()> {
+    let provider = ProviderBuilder::new()
+        .wallet(wallet.clone())
+        .connect_http(rpc_url.clone());
+
+    let block_number = provider.get_block_number().await?;
+
+    let chain_metrics = metrics::on_chain_metrics();
+    let metric_pairs: Vec<IOperatorStatusRegistry::MetricPair> = chain_metrics
+        .into_iter()
+        .map(|(key, value)| IOperatorStatusRegistry::MetricPair { key, value })
+        .collect();
+
+    let registry = IOperatorStatusRegistry::new(registry_addr, &provider);
+    let call = registry.submitHeartbeat(service_id, blueprint_id, block_number, metric_pairs);
+
+    let tx_hash = call.send().await?.watch().await?;
+    tracing::trace!(?tx_hash, "heartbeat tx confirmed");
+
+    Ok(())
 }

@@ -3,12 +3,11 @@
 //!
 //! Usage: cargo run --bin standalone
 
-use modal_inference::billing::{BillingClient, NonceStore};
 use modal_inference::config::OperatorConfig;
 use modal_inference::idle::IdleManager;
-use modal_inference::metrics;
 use modal_inference::proxy::ModelRegistry;
-use modal_inference::server::{build_router, AppState};
+use modal_inference::server::{build_router, ModalBackend};
+use modal_inference::{AppStateBuilder, BillingClient, NonceStore};
 use blueprint_sdk::std::sync::Arc;
 
 fn setup_log() {
@@ -25,71 +24,70 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Modal Inference Operator (standalone mode)");
 
     let config = OperatorConfig::load(None)?;
-    tracing::info!(name = %config.name, models = config.models.len(), port = config.server.port, "Config loaded");
+    tracing::info!(
+        name = %config.name,
+        models = config.modal.models.len(),
+        port = config.server.port,
+        "Config loaded"
+    );
 
-    for model in &config.models {
-        tracing::info!(name = %model.name, task = %model.task_type, endpoint = %model.modal_endpoint, "Model");
+    for model in &config.modal.models {
+        tracing::info!(
+            name = %model.name,
+            task = %model.task_type,
+            endpoint = %model.modal_endpoint,
+            "Model"
+        );
     }
 
-    let registry = ModelRegistry::new(config.models.clone());
+    let config = Arc::new(config);
+
+    // Initialize billing client
+    let billing_client = match BillingClient::new(&config.tangle, &config.billing) {
+        Ok(client) => {
+            tracing::info!(operator = %client.operator_address(), "Billing enabled");
+            Arc::new(client)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "BillingClient init failed — billing disabled");
+            return Err(anyhow::anyhow!("BillingClient required for standalone mode: {e}"));
+        }
+    };
+
+    let operator_address = billing_client.operator_address();
+    let nonce_store = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
+
+    let registry = ModelRegistry::new(config.modal.models.clone());
 
     // Idle manager
-    let idle_mgr = if config.cost.idle_shutdown_minutes > 0 {
-        let mgr = IdleManager::new(config.cost.idle_shutdown_minutes, config.cost.idle_check_interval_minutes);
-        for m in &config.models {
+    let idle_mgr = if config.modal.idle_shutdown_minutes > 0 {
+        let mgr = IdleManager::new(
+            config.modal.idle_shutdown_minutes,
+            config.modal.idle_check_interval_minutes,
+        );
+        for m in &config.modal.models {
             mgr.register_model(&m.name, &m.modal_endpoint).await;
         }
         let checker = mgr.clone();
         tokio::spawn(async move { checker.run_idle_checker().await });
-        tracing::info!(idle_mins = config.cost.idle_shutdown_minutes, "Idle shutdown enabled");
+        tracing::info!(idle_mins = config.modal.idle_shutdown_minutes, "Idle shutdown enabled");
         Some(mgr)
     } else {
         None
     };
 
-    // Initialize billing client when billing.required is set
-    let (billing, operator_address) = if config.billing.required {
-        match BillingClient::new(Arc::new(config.clone())).await {
-            Ok(client) => {
-                let addr = client.operator_address();
-                tracing::info!(operator = %addr, "Billing enabled");
-                (Some(Arc::new(client)), Some(addr))
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to initialize BillingClient — billing disabled");
-                (None, None)
-            }
-        }
-    } else {
-        tracing::info!("Billing disabled (billing.required = false)");
-        (None, None)
-    };
+    let backend = ModalBackend::new(config.clone(), registry, idle_mgr);
 
-    let nonce_store = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
-
-    let state = Arc::new(AppState {
-        registry,
-        config: config.clone(),
-        idle_manager: idle_mgr,
-        billing,
-        nonce_store,
-        operator_address,
-    });
-
-    // Metrics reporting loop (logs metrics periodically, simulates on-chain submission)
-    let report_interval = config.qos.metrics_interval_secs;
-    if report_interval > 0 {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(report_interval));
-            loop {
-                interval.tick().await;
-                let m = metrics::on_chain_metrics();
-                let summary: Vec<String> = m.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-                tracing::info!(metrics = %summary.join(", "), "Metrics report");
-            }
-        });
-        tracing::info!(interval_secs = report_interval, "Metrics reporting started");
-    }
+    let state = AppStateBuilder::new()
+        .billing(billing_client)
+        .nonce_store(nonce_store)
+        .server_config(Arc::new(config.server.clone()))
+        .billing_config(Arc::new(config.billing.clone()))
+        .operator_address(operator_address)
+        .max_concurrent(config.server.max_concurrent_requests)
+        .backend(backend)
+        .build()
+        .map_err(|e| anyhow::anyhow!("AppState build failed: {e}"))?;
 
     let app = build_router(state);
     let addr = format!("{}:{}", config.server.host, config.server.port);

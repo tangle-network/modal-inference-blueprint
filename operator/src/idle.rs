@@ -4,12 +4,12 @@
 //! checks for idle models and stops their Modal apps to save GPU cost.
 //! On next request, the proxy detects the stopped state and wakes the app.
 
-use blueprint_sdk::std::collections::HashMap;
-use blueprint_sdk::std::sync::Arc;
-use blueprint_sdk::std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Per-model idle state.
 #[derive(Debug)]

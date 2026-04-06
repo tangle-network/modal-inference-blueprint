@@ -1,32 +1,149 @@
-use rust_decimal::Decimal;
+//! Modal-specific operator configuration.
+//!
+//! Shared infrastructure config (`TangleConfig`, `ServerConfig`, `BillingConfig`)
+//! lives in `tangle-inference-core` and is re-exported here. The `modal` section
+//! carries all task-type pricing and the list of Modal endpoints this operator
+//! serves.
+
 use serde::{Deserialize, Serialize};
-use blueprint_sdk::std::path::PathBuf;
-use blueprint_sdk::std::fmt;
+
+pub use tangle_inference_core::{BillingConfig, ServerConfig, TangleConfig};
+
+use crate::qos::QoSConfig;
+
+/// Top-level operator configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperatorConfig {
+    /// Human-readable operator name (shown in /health).
+    #[serde(default = "default_name")]
+    pub name: String,
+
+    /// Tangle network configuration (shared).
+    pub tangle: TangleConfig,
+
+    /// HTTP server configuration (shared).
+    #[serde(default = "default_server_config")]
+    pub server: ServerConfig,
+
+    /// Billing / ShieldedCredits configuration (shared).
+    pub billing: BillingConfig,
+
+    /// Modal-specific backend configuration (task-type pricing, model list,
+    /// idle shutdown settings).
+    pub modal: ModalConfig,
+
+    /// QoS heartbeat configuration (optional — disabled by default).
+    #[serde(default)]
+    pub qos: Option<QoSConfig>,
+}
+
+fn default_name() -> String {
+    "modal-operator".to_string()
+}
+
+fn default_server_config() -> ServerConfig {
+    serde_json::from_str("{}").expect("ServerConfig defaults are valid")
+}
+
+/// Modal backend configuration — the only section that's truly modal-specific.
+///
+/// Holds per-task-type pricing (dispatched via `TaskTypeCostModel`), the list
+/// of Modal endpoints this operator serves, and idle-shutdown settings for
+/// cost optimization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModalConfig {
+    // Task-type pricing (base token units).
+    /// Per input token (chat, text generation).
+    #[serde(default)]
+    pub price_per_input_token: u64,
+    /// Per output token (chat, text generation).
+    #[serde(default)]
+    pub price_per_output_token: u64,
+    /// Per 1,000 characters (TTS, voice cloning, voice design).
+    #[serde(default)]
+    pub price_per_1k_tts_chars: u64,
+    /// Per second of audio (STT, diarize, translate, langid, vad, s2s, speakerid).
+    #[serde(default)]
+    pub price_per_stt_second: u64,
+    /// Per image (image generation).
+    #[serde(default)]
+    pub price_per_image: u64,
+    /// Per second of generated video.
+    #[serde(default)]
+    pub price_per_video_second: u64,
+    /// Per second of generated music.
+    #[serde(default)]
+    pub price_per_music_second: u64,
+    /// Per 1K embedding tokens.
+    #[serde(default)]
+    pub price_per_1k_embedding_tokens: u64,
+    /// Flat price per request for fixed-cost jobs (stitch, enhance, convert).
+    #[serde(default)]
+    pub default_price_per_request: u64,
+
+    /// List of Modal endpoints this operator serves.
+    #[serde(default)]
+    pub models: Vec<ModelEndpoint>,
+
+    /// Stop Modal apps after this many minutes of no requests. 0 = disabled.
+    #[serde(default = "default_idle_shutdown")]
+    pub idle_shutdown_minutes: u64,
+
+    /// How often to check for idle models (minutes).
+    #[serde(default = "default_idle_check")]
+    pub idle_check_interval_minutes: u64,
+}
+
+impl Default for ModalConfig {
+    fn default() -> Self {
+        Self {
+            price_per_input_token: 0,
+            price_per_output_token: 0,
+            price_per_1k_tts_chars: 0,
+            price_per_stt_second: 0,
+            price_per_image: 0,
+            price_per_video_second: 0,
+            price_per_music_second: 0,
+            price_per_1k_embedding_tokens: 0,
+            default_price_per_request: 0,
+            models: Vec::new(),
+            idle_shutdown_minutes: 30,
+            idle_check_interval_minutes: 5,
+        }
+    }
+}
+
+fn default_idle_shutdown() -> u64 {
+    30
+}
+fn default_idle_check() -> u64 {
+    5
+}
 
 /// A single Modal model endpoint that this operator serves.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEndpoint {
-    /// Model identifier (e.g., "cosyvoice3", "fish-s2-pro", "pyannote")
+    /// Model identifier (e.g., "cosyvoice3", "fish-s2-pro", "pyannote").
     pub name: String,
 
-    /// Task type: tts, stt, diarize, clone, enhance, translate, langid, speakerid, vad
+    /// Task type. Determines which `CostModel` sub-entry of `TaskTypeCostModel`
+    /// the request is routed to. Canonical values: `chat`, `tts`, `stt`,
+    /// `image`, `video`, `music`, `embedding`. Any other value falls through
+    /// to the default (flat per-request) cost model.
     #[serde(rename = "type")]
     pub task_type: String,
 
-    /// The Modal deployment URL (e.g., "https://your-org--cosyvoice3-service.modal.run")
+    /// Modal deployment URL (e.g., "https://your-org--cosyvoice3-service.modal.run").
     pub modal_endpoint: String,
 
-    /// Health check path (default: /health)
+    /// Health check path (default: /health).
     #[serde(default = "default_health_path")]
     pub health_path: String,
 
-    /// Synthesis path (default: /synthesize for TTS, /transcribe for STT)
+    /// Inference path override. Defaults are task-type-specific; see
+    /// [`ModelEndpoint::resolve_inference_path`].
     #[serde(default)]
     pub inference_path: Option<String>,
-
-    /// Pricing: cost per 1K units (characters for TTS, seconds for STT)
-    #[serde(default)]
-    pub price_per_1k: Option<Decimal>,
 }
 
 fn default_health_path() -> String {
@@ -49,15 +166,15 @@ impl ModelEndpoint {
             "langid" => "/identify-language",
             "speakerid" => "/identify",
             "vad" => "/detect",
-            "text-generation" | "text" => "/v1/chat/completions",
-            "image-generation" | "image" => "/v1/images/generations",
-            "video-generation" | "video" => "/v1/videos/generations",
+            "chat" | "text-generation" | "text" => "/v1/chat/completions",
+            "image" | "image-generation" => "/v1/images/generations",
+            "video" | "video-generation" => "/v1/videos/generations",
             "video-avatar" => "/generate",
             "video-lipsync" => "/lipsync",
             "video-stitch" => "/stitch",
             "video-understanding" => "/v1/video/analyze",
             "s2s" => "/v1/audio/speech",
-            "music-generation" | "music" => "/v1/audio/generations",
+            "music" | "music-generation" => "/v1/audio/generations",
             "embedding" => "/v1/embeddings",
             "rerank" => "/v1/rerank",
             "voice-conversion" => "/v1/audio/convert",
@@ -67,389 +184,125 @@ impl ModelEndpoint {
     }
 }
 
-/// Operator configuration — loaded from config/operator.toml
-#[derive(Clone, Serialize, Deserialize)]
-pub struct OperatorConfig {
-    /// Operator display name
-    pub name: String,
-
-    /// Tangle marketplace registration
-    #[serde(default)]
-    pub gateway: GatewayConfig,
-
-    /// Tangle network settings (for QoS / heartbeat / registry)
-    #[serde(default)]
-    pub tangle: TangleConfig,
-
-    /// QoS / heartbeat settings
-    #[serde(default)]
-    pub qos: QoSSettings,
-
-    /// HTTP server settings
-    #[serde(default)]
-    pub server: ServerConfig,
-
-    /// Cost management
-    #[serde(default)]
-    pub cost: CostConfig,
-
-    /// Billing / ShieldedCredits configuration (optional — disabled by default)
-    #[serde(default)]
-    pub billing: BillingConfig,
-
-    /// Model endpoints this operator serves
-    #[serde(default)]
-    pub models: Vec<ModelEndpoint>,
-}
-
-impl fmt::Debug for OperatorConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OperatorConfig")
-            .field("name", &self.name)
-            .field("gateway", &self.gateway)
-            .field("tangle", &self.tangle)
-            .field("qos", &self.qos)
-            .field("server", &self.server)
-            .field("cost", &self.cost)
-            .field("billing", &self.billing)
-            .field("models", &self.models.len())
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostConfig {
-    /// Stop Modal apps after this many minutes of no requests. 0 = disabled.
-    #[serde(default = "default_idle_shutdown")]
-    pub idle_shutdown_minutes: u64,
-
-    /// How often to check for idle models (minutes).
-    #[serde(default = "default_idle_check")]
-    pub idle_check_interval_minutes: u64,
-}
-
-impl Default for CostConfig {
-    fn default() -> Self {
-        Self {
-            idle_shutdown_minutes: 30,
-            idle_check_interval_minutes: 5,
-        }
-    }
-}
-
-fn default_idle_shutdown() -> u64 { 30 }
-fn default_idle_check() -> u64 { 5 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct GatewayConfig {
-    /// Tangle marketplace API URL
-    #[serde(default = "default_gateway_url")]
-    pub url: String,
-
-    /// API key for marketplace registration (obtained from marketplace)
-    #[serde(default)]
-    pub api_key: Option<String>,
-
-    /// Payout email for revenue share
-    #[serde(default)]
-    pub payout_email: Option<String>,
-
-    /// Stripe Connect account ID (for fiat payouts)
-    #[serde(default)]
-    pub stripe_connect_id: Option<String>,
-}
-
-fn default_gateway_url() -> String {
-    "https://api.marketplace".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TangleConfig {
-    pub service_id: Option<u64>,
-    pub blueprint_id: u64,
-    #[serde(default)]
-    pub rpc_url: String,
-    #[serde(default)]
-    pub operator_key: String,
-    #[serde(default)]
-    pub status_registry_address: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QoSSettings {
-    /// Heartbeat interval in seconds
-    #[serde(default = "default_heartbeat_interval")]
-    pub heartbeat_interval_secs: u64,
-
-    /// Metrics collection interval in seconds
-    #[serde(default = "default_metrics_interval")]
-    pub metrics_interval_secs: u64,
-
-    /// Prometheus metrics port
-    #[serde(default = "default_prometheus_port")]
-    pub prometheus_port: u16,
-}
-
-impl Default for QoSSettings {
-    fn default() -> Self {
-        Self {
-            heartbeat_interval_secs: 30,
-            metrics_interval_secs: 60,
-            prometheus_port: 9090,
-        }
-    }
-}
-
-fn default_heartbeat_interval() -> u64 { 30 }
-fn default_metrics_interval() -> u64 { 60 }
-fn default_prometheus_port() -> u16 { 9090 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerConfig {
-    #[serde(default = "default_port")]
-    pub port: u16,
-
-    #[serde(default = "default_host")]
-    pub host: String,
-
-    /// Max concurrent requests per model
-    #[serde(default = "default_concurrency")]
-    pub max_concurrency: usize,
-
-    /// Request timeout in seconds
-    #[serde(default = "default_timeout")]
-    pub timeout_secs: u64,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            port: 8080,
-            host: "0.0.0.0".to_string(),
-            max_concurrency: 10,
-            timeout_secs: 120,
-        }
-    }
-}
-
-fn default_port() -> u16 { 8080 }
-fn default_host() -> String { "0.0.0.0".to_string() }
-fn default_concurrency() -> usize { 10 }
-fn default_timeout() -> u64 { 120 }
-
-// ---------------------------------------------------------------------------
-// Billing / ShieldedCredits
-// ---------------------------------------------------------------------------
-
-/// Tangle chain config used exclusively by billing (separate from QoS TangleConfig).
-#[derive(Clone, Serialize, Deserialize)]
-pub struct BillingTangleConfig {
-    /// JSON-RPC endpoint for the Tangle EVM chain
-    #[serde(default)]
-    pub rpc_url: String,
-
-    /// Chain ID
-    #[serde(default)]
-    pub chain_id: u64,
-
-    /// Operator private key (hex, with or without 0x prefix).
-    /// In production, use a KMS or hardware signer instead.
-    #[serde(default)]
-    pub operator_key: String,
-
-    /// ShieldedCredits contract address
-    #[serde(default)]
-    pub shielded_credits: String,
-
-    /// Blueprint ID this operator is registered for
-    #[serde(default)]
-    pub blueprint_id: u64,
-
-    /// Service ID (set after service activation)
-    #[serde(default)]
-    pub service_id: Option<u64>,
-}
-
-impl fmt::Debug for BillingTangleConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BillingTangleConfig")
-            .field("rpc_url", &self.rpc_url)
-            .field("chain_id", &self.chain_id)
-            .field("operator_key", &"[REDACTED]")
-            .field("shielded_credits", &self.shielded_credits)
-            .field("blueprint_id", &self.blueprint_id)
-            .field("service_id", &self.service_id)
-            .finish()
-    }
-}
-
-impl Default for BillingTangleConfig {
-    fn default() -> Self {
-        Self {
-            rpc_url: String::new(),
-            chain_id: 0,
-            operator_key: String::new(),
-            shielded_credits: String::new(),
-            blueprint_id: 0,
-            service_id: None,
-        }
-    }
-}
-
-/// Per-task-type pricing in tsUSD base units (6 decimals: 1 = 0.000001 tsUSD).
-///
-/// Operators set prices for each billing dimension. The billing client
-/// selects the right price based on the task type of the model being served.
-///
-/// Maps to the on-chain PricingUnit enum in InferenceBSM.sol:
-///   PerMillionTokens  → price_per_million_tokens
-///   Per1KCharacters   → price_per_1k_chars
-///   PerSecondAudio    → price_per_second_audio
-///   PerSecondVideo    → price_per_second_video
-///   PerImage          → price_per_image
-///   PerJob            → price_per_job
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PricingConfig {
-    /// Price per 1,000 characters (TTS, voice cloning, voice design)
-    #[serde(default)]
-    pub price_per_1k_chars: u64,
-
-    /// Price per second of audio (STT, diarize, translate, langid, vad, s2s)
-    #[serde(default)]
-    pub price_per_second_audio: u64,
-
-    /// Price per second of video (video-generation, video-avatar, video-lipsync)
-    #[serde(default)]
-    pub price_per_second_video: u64,
-
-    /// Price per image generated
-    #[serde(default)]
-    pub price_per_image: u64,
-
-    /// Price per million input tokens (text generation)
-    #[serde(default)]
-    pub price_per_million_input_tokens: u64,
-
-    /// Price per million output tokens (text generation)
-    #[serde(default)]
-    pub price_per_million_output_tokens: u64,
-
-    /// Price per fixed job (stitch, enhance, voice-conversion, etc.)
-    #[serde(default)]
-    pub price_per_job: u64,
-
-    /// Price per second of music generated
-    #[serde(default)]
-    pub price_per_second_music: u64,
-}
-
-impl Default for PricingConfig {
-    fn default() -> Self {
-        Self {
-            price_per_1k_chars: 0,
-            price_per_second_audio: 0,
-            price_per_second_video: 0,
-            price_per_image: 0,
-            price_per_million_input_tokens: 0,
-            price_per_million_output_tokens: 0,
-            price_per_job: 0,
-            price_per_second_music: 0,
-        }
-    }
-}
-
-/// Billing / ShieldedCredits configuration.
-///
-/// When `required` is false (default), operators can run without billing —
-/// no SpendAuth validation is performed and all requests are served free.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BillingConfig {
-    /// Whether billing (SpendAuth) is required on every request.
-    /// When true, requests without a valid SpendAuth are rejected with 402.
-    #[serde(default)]
-    pub required: bool,
-
-    /// Tangle chain settings for on-chain billing calls.
-    #[serde(default)]
-    pub tangle: BillingTangleConfig,
-
-    /// Per-task-type pricing.
-    #[serde(default)]
-    pub pricing: PricingConfig,
-
-    /// Maximum amount a single SpendAuth can authorize (anti-abuse).
-    #[serde(default)]
-    pub max_spend_per_request: u64,
-
-    /// Minimum balance required in a credit account to serve a request.
-    #[serde(default)]
-    pub min_credit_balance: u64,
-
-    /// Minimum charge amount per request (gas cost protection).
-    /// Requests whose pre-authorized amount is below this are rejected.
-    #[serde(default)]
-    pub min_charge_amount: u64,
-
-    /// Maximum retries for claim_payment on-chain calls.
-    #[serde(default = "default_claim_max_retries")]
-    pub claim_max_retries: u32,
-
-    /// Clock skew tolerance in seconds for SpendAuth expiry checks.
-    #[serde(default = "default_clock_skew_tolerance")]
-    pub clock_skew_tolerance_secs: u64,
-
-    /// Maximum gas price in gwei the operator is willing to pay for billing txs.
-    /// 0 = no cap (default).
-    #[serde(default)]
-    pub max_gas_price_gwei: u64,
-
-    /// Path to persist used nonces across restarts (replay protection).
-    /// Defaults to `data/nonces.json`. Without persistence, nonces are lost on
-    /// restart, allowing replay of unexpired SpendAuth signatures.
-    #[serde(default = "default_nonce_store_path")]
-    pub nonce_store_path: Option<std::path::PathBuf>,
-
-    /// ERC-20 token address for x402 payment (e.g. tsUSD).
-    /// Included in 402 Payment Required responses so clients know which token to use.
-    #[serde(default)]
-    pub payment_token_address: Option<String>,
-}
-
-impl Default for BillingConfig {
-    fn default() -> Self {
-        Self {
-            required: false,
-            tangle: BillingTangleConfig::default(),
-            pricing: PricingConfig::default(),
-            max_spend_per_request: 0,
-            min_credit_balance: 0,
-            min_charge_amount: 0,
-            claim_max_retries: default_claim_max_retries(),
-            clock_skew_tolerance_secs: default_clock_skew_tolerance(),
-            max_gas_price_gwei: 0,
-            nonce_store_path: default_nonce_store_path(),
-            payment_token_address: None,
-        }
-    }
-}
-
-fn default_claim_max_retries() -> u32 { 3 }
-fn default_clock_skew_tolerance() -> u64 { 30 }
-fn default_nonce_store_path() -> Option<std::path::PathBuf> {
-    Some(std::path::PathBuf::from("data/nonces.json"))
-}
-
 impl OperatorConfig {
-    /// Load config from file or default path.
-    pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
-        let path = path.unwrap_or_else(|| PathBuf::from("config/operator.toml"));
+    /// Load config from file, env vars, and CLI overrides.
+    pub fn load(path: Option<&str>) -> anyhow::Result<Self> {
+        let mut builder = config::Config::builder();
 
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            let config: OperatorConfig = toml::from_str(&content)?;
-            Ok(config)
-        } else {
-            anyhow::bail!("Config file not found: {}", path.display())
+        if let Some(path) = path {
+            builder = builder.add_source(config::File::with_name(path));
+        } else if std::path::Path::new("config/operator.toml").exists() {
+            builder = builder.add_source(config::File::with_name("config/operator.toml"));
         }
+
+        // Env vars override file config. Prefix: MODAL_OP_ (e.g. MODAL_OP_TANGLE__RPC_URL).
+        builder = builder.add_source(
+            config::Environment::with_prefix("MODAL_OP")
+                .separator("__")
+                .try_parsing(true),
+        );
+
+        let cfg = builder.build()?.try_deserialize::<Self>()?;
+        Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn example_json() -> &'static str {
+        r#"{
+            "name": "test-op",
+            "tangle": {
+                "rpc_url": "http://localhost:8545",
+                "chain_id": 31337,
+                "operator_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "shielded_credits": "0x0000000000000000000000000000000000000002",
+                "blueprint_id": 1,
+                "service_id": null
+            },
+            "billing": {
+                "max_spend_per_request": 1000000,
+                "min_credit_balance": 1000
+            },
+            "modal": {
+                "price_per_input_token": 1,
+                "price_per_output_token": 3,
+                "price_per_1k_tts_chars": 15000,
+                "price_per_stt_second": 300,
+                "price_per_image": 50000,
+                "price_per_video_second": 1000000,
+                "price_per_music_second": 500,
+                "price_per_1k_embedding_tokens": 10,
+                "default_price_per_request": 1000,
+                "models": [
+                    {
+                        "name": "kokoro-tts",
+                        "type": "tts",
+                        "modal_endpoint": "https://example--kokoro.modal.run"
+                    }
+                ]
+            }
+        }"#
+    }
+
+    #[test]
+    fn test_deserialize_full_config() {
+        let cfg: OperatorConfig = serde_json::from_str(example_json()).unwrap();
+        assert_eq!(cfg.name, "test-op");
+        assert_eq!(cfg.tangle.chain_id, 31337);
+        assert_eq!(cfg.modal.price_per_input_token, 1);
+        assert_eq!(cfg.modal.price_per_output_token, 3);
+        assert_eq!(cfg.modal.price_per_1k_tts_chars, 15000);
+        assert_eq!(cfg.modal.models.len(), 1);
+        assert_eq!(cfg.modal.models[0].task_type, "tts");
+    }
+
+    #[test]
+    fn test_resolve_inference_path() {
+        let m = ModelEndpoint {
+            name: "x".into(),
+            task_type: "tts".into(),
+            modal_endpoint: "https://x".into(),
+            health_path: "/health".into(),
+            inference_path: None,
+        };
+        assert_eq!(m.resolve_inference_path(), "/synthesize");
+
+        let m = ModelEndpoint {
+            task_type: "chat".into(),
+            inference_path: None,
+            ..m
+        };
+        assert_eq!(m.resolve_inference_path(), "/v1/chat/completions");
+
+        let m = ModelEndpoint {
+            task_type: "image".into(),
+            inference_path: None,
+            ..m
+        };
+        assert_eq!(m.resolve_inference_path(), "/v1/images/generations");
+    }
+
+    #[test]
+    fn test_modal_config_defaults() {
+        let json = r#"{
+            "tangle": {
+                "rpc_url": "http://localhost:8545",
+                "chain_id": 31337,
+                "operator_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "shielded_credits": "0x0000000000000000000000000000000000000002",
+                "blueprint_id": 1
+            },
+            "billing": { "max_spend_per_request": 0, "min_credit_balance": 0 },
+            "modal": {}
+        }"#;
+        let cfg: OperatorConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.modal.idle_shutdown_minutes, 30);
+        assert_eq!(cfg.modal.idle_check_interval_minutes, 5);
+        assert_eq!(cfg.modal.default_price_per_request, 0);
+        assert!(cfg.modal.models.is_empty());
+        assert_eq!(cfg.name, "modal-operator");
     }
 }

@@ -4,14 +4,13 @@
 //! the Tangle Gateway and the operator's Modal-hosted models.
 
 use crate::config::ModelEndpoint;
-use crate::metrics;
 use anyhow::Result;
 use bytes::Bytes;
 use reqwest::Client;
-use blueprint_sdk::std::collections::HashMap;
-use blueprint_sdk::std::sync::Arc;
-use blueprint_sdk::std::time::Instant;
-use tracing::{error, info, warn};
+use std::collections::HashMap;
+use std::time::Instant;
+use tangle_inference_core::RequestGuard;
+use tracing::{error, info};
 
 /// Model registry — maps model names to their Modal endpoints.
 pub struct ModelRegistry {
@@ -68,10 +67,11 @@ impl ModelRegistry {
         let inference_path = path.unwrap_or_else(|| model.resolve_inference_path());
         let url = format!("{}{}", model.modal_endpoint.trim_end_matches('/'), inference_path);
 
-        let guard = metrics::RequestGuard::new(model_name);
+        let mut guard = RequestGuard::new(model_name);
         let start = Instant::now();
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Content-Type", content_type)
             .body(body)
@@ -84,7 +84,7 @@ impl ModelRegistry {
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
             error!(model = model_name, status = %status, latency_ms, "Modal proxy error");
-            guard.finish(false, latency_ms);
+            guard.record_error("upstream");
             return Err(anyhow::anyhow!("Modal returned {status}: {error_body}"));
         }
 
@@ -98,7 +98,8 @@ impl ModelRegistry {
         let data = response.bytes().await?;
 
         info!(model = model_name, latency_ms, bytes = data.len(), "Modal proxy success");
-        guard.finish(true, latency_ms);
+        guard.set_success();
+        drop(guard);
 
         Ok(ProxyResponse {
             data,
