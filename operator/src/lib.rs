@@ -175,11 +175,16 @@ impl BackgroundService for ModalInferenceServer {
                 }
             };
 
-            let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
             match server::start(state, shutdown_rx).await {
-                Ok(_handle) => {
+                Ok(handle) => {
                     tracing::info!("Modal HTTP server started — background service ready");
+                    // Wait for the server to actually shut down before signaling completion.
+                    // The oneshot `tx` signals "service finished" to BlueprintRunner.
+                    // shutdown_tx must stay alive — dropping it triggers graceful shutdown.
+                    let _ = handle.await;
+                    drop(shutdown_tx);
                     let _ = tx.send(Ok(()));
                 }
                 Err(e) => {
