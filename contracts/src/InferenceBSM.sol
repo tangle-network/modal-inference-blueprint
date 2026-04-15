@@ -400,5 +400,5 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         return _slashProposals[slashId];
     }
 
-    receive() external payable {}
+    receive() external payable override {}
 }
