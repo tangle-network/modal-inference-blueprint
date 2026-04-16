@@ -1144,6 +1144,27 @@ estimated_latency_ms = 15000
 price_per_second = 0.005
 notes = "ICLR 2026. Hierarchical compression for long-context. Efficient on A10G."
 
+# --- Seedance (ByteDance) lives in ph0ny as a provider (fal.ai/BytePlus proxy), ---
+# --- NOT as a Modal service. See ph0ny provider config for Seedance routing.   ---
+
+# --- C-Dance (Tsinghua/HKUST) — full-body dance from audio ---
+
+[[models]]
+model_id = "tsinghua-mars-lab/c-dance"
+name = "c-dance"
+task_type = "video-avatar"
+gpu_type = "A100-80GB"
+gpu_count = 1
+vram_required_mib = 24000
+recommended_tp = 1
+modal_image = "nvidia/cuda:12.4.0-devel-ubuntu22.04"
+inference_engine = "service"
+service_file = "cdance_service.py"
+endpoint_path = "/generate"
+estimated_latency_ms = 180000
+price_per_second = 0.05
+notes = "Full-body dance generation from audio. Diffusion-based, A100 required. Apache 2.0."
+
 # =============================================================================
 # TEXT-TO-SPEECH (TTS) MODELS
 # =============================================================================
