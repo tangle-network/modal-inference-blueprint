@@ -1,0 +1,238 @@
+{
+  "name": "Modal Inference Blueprint",
+  "description": "Tangle Blueprint for serving AI models on Modal GPUs across text, voice, image, video, and music workloads.",
+  "author": "Tangle Network",
+  "category": "AI Inference",
+  "image": null,
+  "website": "https://tangle.tools",
+  "codeRepository": "https://github.com/tangle-network/modal-inference-blueprint",
+  "docs": "https://github.com/tangle-network/modal-inference-blueprint#readme",
+  "integrity": null,
+  "blueprintUi": {
+    "displayName": "Modal Inference",
+    "description": "Operate a Modal-backed inference catalog with task filtering, deployed model health, idle shutdown posture, and request metrics.",
+    "requestedSlug": "modal-inference",
+    "publisher": {
+      "name": "Tangle Network",
+      "namespace": "tangle",
+      "verified": false
+    },
+    "resources": {
+      "serviceLabel": "Modal inference service",
+      "itemLabel": "Model endpoint",
+      "itemRoute": "agents"
+    },
+    "surfaces": [
+      "generic-overview",
+      "service-explorer",
+      "actions-panel",
+      "resources",
+      "metrics",
+      "permissions"
+    ],
+    "theme": {
+      "badgeLabel": "Modal GPU catalog",
+      "accentColor": "#0F766E",
+      "secondaryColor": "#042F2E",
+      "icon": "spark"
+    },
+    "overviewCards": [
+      {
+        "id": "multi-modal-catalog",
+        "kind": "stat",
+        "title": "Models deployed",
+        "description": "LLMs, TTS, STT, images, video, and music inference endpoints on Modal GPUs.",
+        "value": "116",
+        "tone": "success"
+      },
+      {
+        "id": "task-type-pricing",
+        "kind": "checklist",
+        "title": "Per-task billing",
+        "items": [
+          "Chat (tokens)",
+          "TTS (chars/1K)",
+          "STT (seconds)",
+          "Image (per gen)",
+          "Video (seconds)",
+          "Music (seconds)"
+        ],
+        "tone": "info"
+      },
+      {
+        "id": "idle-cost-control",
+        "kind": "callout",
+        "title": "Auto-stop idle models",
+        "description": "Configured shutdown windows prevent GPU burn when no requests arrive; wake on demand.",
+        "tone": "warning"
+      }
+    ],
+    "actions": [
+      {
+        "id": "deploy-modal-service",
+        "label": "Deploy Modal service",
+        "description": "Register a newly deployed Modal app endpoint with task type and configure per-model idle shutdown window.",
+        "target": "service",
+        "submitLabel": "Register",
+        "fields": [
+          {
+            "key": "model_name",
+            "label": "Model name",
+            "input": "text",
+            "required": true,
+            "placeholder": "kokoro-tts"
+          },
+          {
+            "key": "task_type",
+            "label": "Task type",
+            "input": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Chat",
+                "value": "chat"
+              },
+              {
+                "label": "Text-to-Speech",
+                "value": "tts"
+              },
+              {
+                "label": "Speech-to-Text",
+                "value": "stt"
+              },
+              {
+                "label": "Image generation",
+                "value": "image"
+              },
+              {
+                "label": "Video generation",
+                "value": "video"
+              },
+              {
+                "label": "Music generation",
+                "value": "music"
+              }
+            ]
+          },
+          {
+            "key": "modal_endpoint",
+            "label": "Modal endpoint URL",
+            "input": "text",
+            "required": true,
+            "placeholder": "https://org--inference-model.modal.run"
+          }
+        ]
+      },
+      {
+        "id": "configure-billing",
+        "label": "Set task pricing",
+        "description": "Configure per-unit costs for billing: input/output tokens (chat), characters (TTS), seconds (video/music), or images.",
+        "target": "service",
+        "submitLabel": "Save",
+        "fields": [
+          {
+            "key": "task_type",
+            "label": "Pricing axis",
+            "input": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Chat (per input token)",
+                "value": "price_per_input_token"
+              },
+              {
+                "label": "Chat (per output token)",
+                "value": "price_per_output_token"
+              },
+              {
+                "label": "TTS (per 1K chars)",
+                "value": "price_per_1k_tts_chars"
+              },
+              {
+                "label": "Video (per second)",
+                "value": "price_per_video_second"
+              }
+            ]
+          },
+          {
+            "key": "price_units",
+            "label": "Price (tsUSD base units)",
+            "input": "number",
+            "required": true,
+            "placeholder": "400"
+          },
+          {
+            "key": "idle_shutdown_seconds",
+            "label": "Idle shutdown (sec)",
+            "input": "number",
+            "required": false,
+            "placeholder": "300"
+          }
+        ]
+      }
+    ],
+    "resourceViews": [
+      {
+        "id": "model-endpoints",
+        "title": "Model endpoints",
+        "kind": "table",
+        "target": "resource",
+        "defaultSort": "task_type:asc",
+        "columns": [
+          {
+            "key": "model",
+            "label": "Model",
+            "emphasis": true
+          },
+          {
+            "key": "task_type",
+            "label": "Task"
+          },
+          {
+            "key": "modal_state",
+            "label": "Modal state"
+          },
+          {
+            "key": "price",
+            "label": "Price"
+          }
+        ]
+      }
+    ],
+    "modules": [
+      {
+        "module": "metrics-overview",
+        "slot": "overview",
+        "metricKeys": [
+          "requests_total",
+          "inference_latency_ms",
+          "active_models",
+          "gpu_seconds_billed",
+          "idle_models_stopped"
+        ]
+      },
+      {
+        "module": "permissions-matrix",
+        "slot": "sidebar",
+        "eventKinds": [
+          "model_deployed",
+          "endpoint_registered",
+          "spend_auth_validated",
+          "model_woke",
+          "idle_shutdown_triggered"
+        ]
+      },
+      {
+        "module": "resource-events",
+        "slot": "resources",
+        "eventKinds": [
+          "inference_started",
+          "inference_completed",
+          "billing_settled",
+          "modal_error",
+          "cold_start_detected"
+        ]
+      }
+    ]
+  }
+}
