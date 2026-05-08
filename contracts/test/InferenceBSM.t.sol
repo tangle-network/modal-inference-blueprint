@@ -43,7 +43,7 @@ contract InferenceBSMTest is Test {
 
         bytes memory regData = abi.encode(models, taskTypes, uint32(8000), "A10G", "https://op1.modal.run");
 
-        vm.prank(address(0xTANGLE)); // Simulate onlyFromTangle
+        vm.prank(makeAddr("tangle")); // Simulate onlyFromTangle
         // Note: in real tests, need to set up the Tangle mock. For now, test the logic.
         // bsm.onRegister(operator1, regData);
     }
@@ -78,8 +78,14 @@ contract InferenceBSMTest is Test {
     // ── Admin Controls ────────────────────────────────────────────────
 
     function test_setAdmin() public {
+        // BlueprintServiceManagerBase wires `blueprintOwner` via the one-shot
+        // `onBlueprintCreated` hook, not the constructor. Bootstrap it for
+        // this unit test so we can exercise the owner-gated path.
+        address owner = makeAddr("blueprintOwner");
+        bsm.onBlueprintCreated(1, owner, makeAddr("tangle"));
+
         address newAdmin = address(0xB);
-        // Only blueprintOwner can set admin — in tests, deployer is the owner
+        vm.prank(owner);
         bsm.setAdmin(newAdmin);
         assertEq(bsm.admin(), newAdmin);
     }
