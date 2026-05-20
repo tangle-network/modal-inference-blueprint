@@ -135,7 +135,14 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         slashingEnabled = false;
 
         SlashingLib.initializeConfig(_slashState);
-        SlashingLib.updateConfig(_slashState, 1 days, false, 1000);
+        // BSM-initiated performance slashing config:
+        //   disputeWindow:                 1 day  — operators have 24h to dispute
+        //   instantSlashEnabled:           false  — no emergency-instant path
+        //   maxSlashBps:                   1000   — cap any single slash at 10%
+        //   disputeResolutionDeadline:     7 days — admin has 7 days post-dispute to resolve
+        //   disputeBond:                   0      — no bond required (BSM has no treasury)
+        //   maxPendingSlashesPerOperator:  16     — anti-spam guard
+        SlashingLib.updateConfig(_slashState, 1 days, false, 1000, 7 days, 0, 16);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -227,8 +234,14 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         SlashingLib.markExecuted(_slashProposals, slashId, 0);
     }
 
+    /// @notice Dispute a pending slash proposal.
+    /// @dev This BSM does not require a dispute bond (config.disputeBond == 0).
+    ///      The function is intentionally non-payable so any accidental ETH
+    ///      transfer reverts at the EVM level. If bonded disputes are later
+    ///      desired, add an admin setter for `disputeBond` and convert this
+    ///      function to `payable`, forwarding `msg.value` as `bondPosted`.
     function disputeSlash(uint64 slashId, string calldata reason) external {
-        SlashingLib.disputeSlash(_slashProposals, slashId, msg.sender, reason);
+        SlashingLib.disputeSlash(_slashProposals, _slashState.config, slashId, msg.sender, reason, 0);
     }
 
     function cancelSlash(uint64 slashId, string calldata reason) external onlyAdmin {
