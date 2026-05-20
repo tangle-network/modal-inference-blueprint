@@ -217,7 +217,7 @@ mod tests {
             "tangle": {
                 "rpc_url": "http://localhost:8545",
                 "chain_id": 31337,
-                "operator_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "operator_key": "0x0000000000000000000000000000000000000000000000000000000000000000",
                 "shielded_credits": "0x0000000000000000000000000000000000000002",
                 "blueprint_id": 1,
                 "service_id": null
@@ -291,7 +291,7 @@ mod tests {
             "tangle": {
                 "rpc_url": "http://localhost:8545",
                 "chain_id": 31337,
-                "operator_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "operator_key": "0x0000000000000000000000000000000000000000000000000000000000000000",
                 "shielded_credits": "0x0000000000000000000000000000000000000002",
                 "blueprint_id": 1
             },

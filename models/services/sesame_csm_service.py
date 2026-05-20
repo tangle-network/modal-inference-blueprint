@@ -17,7 +17,7 @@ import os
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
     create_model_volume,
@@ -62,7 +62,7 @@ image = (
     allow_concurrent_inputs=5,
     secrets=[modal.Secret.from_name("huggingface")],
 )
-class SesameCsmService(PhonyTTSService):
+class SesameCsmService(ModalTTSService):
     """Sesame CSM 1B — conversational speech generation."""
 
     MODEL_NAME = "sesame-csm"

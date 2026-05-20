@@ -166,7 +166,7 @@ impl IdleManager {
 }
 
 /// Extract Modal app name from endpoint URL.
-/// "https://drewstone--cosyvoice3-service.modal.run" → "cosyvoice3-service"
+/// "https://example-org--cosyvoice3-service.modal.run" -> "cosyvoice3-service"
 fn extract_modal_app_name(url: &str) -> Option<String> {
     let url = url.trim_end_matches('/');
     // Pattern: https://{org}--{app-name}.modal.run
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn test_extract_modal_app_name() {
         assert_eq!(
-            extract_modal_app_name("https://drewstone--cosyvoice3-service.modal.run"),
+            extract_modal_app_name("https://example-org--cosyvoice3-service.modal.run"),
             Some("cosyvoice3-service".to_string())
         );
         assert_eq!(

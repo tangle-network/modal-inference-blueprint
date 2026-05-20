@@ -16,7 +16,7 @@
 - [x] Foundry project with tnt-core 0.10.4 + OpenZeppelin 5.1.0
 - [x] Compiles clean against blueprint-sdk main branch
 - [x] Model registry — 116 models across 17 task types
-- [x] 38 production service files (from ph0ny) in models/services/
+- [x] 38 production service files (from Modal inference prototypes) in models/services/
 - [x] 11 Jinja2 engine templates for auto-generated models
 - [x] deploy.py CLI — deploy, list, gen-config, health, cost
 - [x] x402/ShieldedCredits billing (authorizeSpend, claimPayment, EIP-712)

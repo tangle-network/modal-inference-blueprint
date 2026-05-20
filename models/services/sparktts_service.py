@@ -19,7 +19,7 @@ import modal
 import os
 
 from base_service import (
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
     base_service_layer,
@@ -88,7 +88,7 @@ image = (
     },
     allow_concurrent_inputs=5,
 )
-class SparkTTSService(PhonyTTSService):
+class SparkTTSService(ModalTTSService):
     """Spark-TTS with zero-shot voice cloning via BiCodec."""
 
     MODEL_NAME = "spark-tts"

@@ -20,7 +20,7 @@ from base_service import create_modal_app, create_model_volume, download_audio_t
 
 # --- Modal resources ---------------------------------------------------------
 
-app = create_modal_app("ph0ny-distil-whisper")
+app = create_modal_app("modal-inference-distil-whisper")
 model_cache = create_model_volume()
 
 MODEL_CACHE_DIR = "/models"

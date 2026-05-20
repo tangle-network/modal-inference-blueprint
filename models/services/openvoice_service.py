@@ -21,7 +21,7 @@ import os
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
     wav_bytes_from_numpy,
@@ -83,7 +83,7 @@ image = (
     volumes={"/voice-cache": voice_cache},
     allow_concurrent_inputs=5,
 )
-class OpenVoiceService(PhonyTTSService):
+class OpenVoiceService(ModalTTSService):
     """OpenVoice V2 TTS with zero-shot voice cloning."""
 
     MODEL_NAME = "openvoice-v2"
@@ -189,7 +189,7 @@ class OpenVoiceService(PhonyTTSService):
             src_se=source_se,
             tgt_se=target_se,
             output_path=out_path,
-            message="@ph0ny",
+            message="@modal-inference",
         )
 
         audio, sr = sf.read(out_path, dtype="float32")
@@ -242,7 +242,7 @@ class OpenVoiceService(PhonyTTSService):
             src_se=source_se,
             tgt_se=target_se,
             output_path=out_path,
-            message="@ph0ny",
+            message="@modal-inference",
         )
 
         audio, sr = sf.read(out_path, dtype="float32")

@@ -28,7 +28,7 @@ Deploy: modal deploy modal/step_audio_service.py
 import modal
 import os
 
-app = modal.App("ph0ny-step-audio-s2s")
+app = modal.App("modal-inference-step-audio-s2s")
 
 MODEL_DIR = "/models/step-audio-2"
 model_cache = modal.Volume.from_name("phony-step-audio-model-cache", create_if_missing=True)

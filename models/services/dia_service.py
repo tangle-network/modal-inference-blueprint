@@ -18,7 +18,7 @@ import os
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
     create_model_volume,
@@ -57,7 +57,7 @@ image = (
     allow_concurrent_inputs=5,
     secrets=[modal.Secret.from_name("huggingface")],
 )
-class DiaService(PhonyTTSService):
+class DiaService(ModalTTSService):
     """Dia 1.6B — ultra-realistic dialogue TTS."""
 
     MODEL_NAME = "dia-tts"

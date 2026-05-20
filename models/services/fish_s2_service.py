@@ -29,7 +29,7 @@ import os
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
 )
@@ -91,7 +91,7 @@ REF_TOKENS_DIR = "/voice-cache/ref-tokens"
     },
     allow_concurrent_inputs=3,  # 4B model uses ~17GB VRAM per request
 )
-class FishS2Service(PhonyTTSService):
+class FishS2Service(ModalTTSService):
     """Fish Audio S2 Pro TTS with zero-shot cloning and emotion tags."""
 
     MODEL_NAME = "fish-s2-pro"

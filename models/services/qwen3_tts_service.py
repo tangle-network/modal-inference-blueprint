@@ -21,7 +21,7 @@ import os
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
     wav_bytes_from_numpy,
@@ -89,7 +89,7 @@ image = (
     volumes={"/voice-cache": voice_cache},
     allow_concurrent_inputs=5,
 )
-class Qwen3TTSService(PhonyTTSService):
+class Qwen3TTSService(ModalTTSService):
     """Qwen3-TTS with voice cloning (Base) and preset voices (CustomVoice)."""
 
     MODEL_NAME = "qwen3-tts"

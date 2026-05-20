@@ -37,6 +37,9 @@ This generates Modal app files in `models/apps/` and runs `modal deploy` for eac
 ### 2. Generate your operator config
 
 ```bash
+# Start from the public example config
+cp config/example.toml config/operator.toml
+
 # Auto-generate operator.toml entries from your deployed models
 python3 models/deploy.py gen-config --org your-modal-org --task tts >> config/operator.toml
 ```

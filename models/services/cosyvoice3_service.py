@@ -21,7 +21,7 @@ import os
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     create_voice_volume,
 )
@@ -87,7 +87,7 @@ image = (
     },
     allow_concurrent_inputs=5,
 )
-class CosyVoice3Service(PhonyTTSService):
+class CosyVoice3Service(ModalTTSService):
     """CosyVoice3 TTS with zero-shot voice cloning (1.5B params, 9 languages)."""
 
     MODEL_NAME = "cosyvoice3"

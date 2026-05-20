@@ -32,7 +32,7 @@ Deploy: modal deploy modal/moshi_service.py
 import modal
 import os
 
-app = modal.App("ph0ny-moshi-s2s")
+app = modal.App("modal-inference-moshi-s2s")
 
 MODEL_DIR = "/models/moshi"
 model_cache = modal.Volume.from_name("phony-moshi-model-cache", create_if_missing=True)

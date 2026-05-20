@@ -1,5 +1,5 @@
 """
-PhonyModelService -- Base classes for ph0ny Gateway voice model deployments.
+ModalModelService -- Base classes for Modal inference voice model deployments.
 
 Eliminates boilerplate across Modal TTS/STT services by providing:
 - Standard /synthesize, /synthesize_stream, /synthesize_with_url endpoints
@@ -10,15 +10,15 @@ Eliminates boilerplate across Modal TTS/STT services by providing:
 - Consistent error handling, timing headers, and logging
 - WAV buffer serialization helpers
 
-Subclass PhonyTTSService for voice-cloning TTS models. Override:
+Subclass ModalTTSService for voice-cloning TTS models. Override:
     MODEL_NAME, GPU_TYPE, IMAGE, VOICE_VOLUME_NAME, SAMPLE_RATE,
     setup_model(), synthesize_impl(), and optionally synthesize_stream_impl().
 
-Subclass PhonyModelService for non-TTS models (STT, S2S, etc.) when you
+Subclass ModalModelService for non-TTS models (STT, S2S, etc.) when you
 only need the health/volume/error-handling scaffolding.
 
 Example:
-    class MyTTS(PhonyTTSService):
+    class MyTTS(ModalTTSService):
         MODEL_NAME = "my-model"
         GPU_TYPE = "A10G"
         FEATURES = ["voice_cloning", "streaming"]
@@ -109,11 +109,11 @@ def download_audio_to_tempfile(
 
 
 # ---------------------------------------------------------------------------
-# PhonyTTSService -- base for all voice-cloning TTS deployments
+# ModalTTSService -- base for all voice-cloning TTS deployments
 # ---------------------------------------------------------------------------
 
-class PhonyTTSService:
-    """Base class for ph0ny Gateway TTS services on Modal.
+class ModalTTSService:
+    """Base class for Modal inference TTS services on Modal.
 
     Class-level constants (override in subclasses):
         MODEL_NAME:          Short identifier, used in app name and logs.
@@ -575,9 +575,9 @@ class PhonyTTSService:
 # ---------------------------------------------------------------------------
 
 def create_modal_app(model_name: str):
-    """Create a Modal App with the standard ph0ny naming convention."""
+    """Create a Modal App with the standard Modal inference naming convention."""
     import modal
-    return modal.App(f"ph0ny-{model_name}")
+    return modal.App(f"modal-inference-{model_name}")
 
 
 def base_service_layer(image):

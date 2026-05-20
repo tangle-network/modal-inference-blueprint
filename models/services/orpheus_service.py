@@ -24,7 +24,7 @@ import traceback
 
 from base_service import (
     base_service_layer,
-    PhonyTTSService,
+    ModalTTSService,
     create_modal_app,
     wav_bytes_from_numpy,
 )
@@ -63,7 +63,7 @@ DEFAULT_VOICE = "tara"
     volumes={"/model-cache": model_cache},
     allow_concurrent_inputs=5,
 )
-class OrpheusService(PhonyTTSService):
+class OrpheusService(ModalTTSService):
     """Orpheus TTS service with preset voices and emotion control."""
 
     MODEL_NAME = "orpheus-tts"

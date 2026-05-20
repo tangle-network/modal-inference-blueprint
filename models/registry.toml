@@ -1144,8 +1144,8 @@ estimated_latency_ms = 15000
 price_per_second = 0.005
 notes = "ICLR 2026. Hierarchical compression for long-context. Efficient on A10G."
 
-# --- Seedance (ByteDance) lives in ph0ny as a provider (fal.ai/BytePlus proxy), ---
-# --- NOT as a Modal service. See ph0ny provider config for Seedance routing.   ---
+# --- Seedance (ByteDance) lives outside Modal as a provider (fal.ai/BytePlus proxy), ---
+# --- NOT as a Modal service. See Modal provider config for Seedance routing.   ---
 
 # --- C-Dance (Tsinghua/HKUST) — full-body dance from audio ---
 
