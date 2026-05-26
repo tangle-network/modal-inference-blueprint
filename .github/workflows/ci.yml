@@ -9,7 +9,7 @@ on:
 jobs:
   rust:
     name: Rust (clippy + test)
-    runs-on: [self-hosted, staging-runner]
+    runs-on: [self-hosted, ci-linux]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -21,7 +21,7 @@ jobs:
 
   forge:
     name: Forge (build + test)
-    runs-on: [self-hosted, staging-runner]
+    runs-on: [self-hosted, ci-linux]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,7 +34,7 @@ jobs:
 
   registry:
     name: Registry Validation
-    runs-on: [self-hosted, staging-runner]
+    runs-on: [self-hosted, ci-linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
