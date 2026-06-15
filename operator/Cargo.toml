@@ -50,5 +50,5 @@ tokio-stream = { workspace = true }
 bytes = "1"
 
 [dev-dependencies]
-blueprint-sdk = { version = "0.2.0-alpha.5", features = ["testing", "tangle"] }
+blueprint-sdk = { version = "0.2.0-alpha.9", features = ["testing", "tangle"] }
 wiremock = "0.6"
