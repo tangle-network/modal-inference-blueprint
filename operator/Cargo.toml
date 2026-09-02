@@ -31,7 +31,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Shared inference operator infrastructure (billing, metrics, health, server helpers)
-tangle-inference-core = { git = "https://github.com/tangle-network/tangle-inference-core", branch = "master" }
+tangle-inference-core = { git = "https://github.com/tangle-network/tangle-inference-core", rev = "c7e11063a2ba30c662c64356a73bd81d4a03a267", default-features = false, features = ["billing", "http", "metrics"] }
 
 # HTTP server
 axum = { workspace = true }
@@ -50,5 +50,5 @@ tokio-stream = { workspace = true }
 bytes = "1"
 
 [dev-dependencies]
-blueprint-sdk = { version = "0.2.0-alpha.9", features = ["testing", "tangle"] }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", rev = "54f06f2e8cc697435c862f9e24fcefe45aab3324", package = "blueprint-sdk", features = ["testing", "tangle"] }
 wiremock = "0.6"
