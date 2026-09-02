@@ -9,9 +9,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/tangle-network/modal-inference-blueprint"
 
 [workspace.dependencies]
-blueprint-sdk = { version = "0.2.0-alpha.9", features = ["std", "tangle", "macros"] }
-blueprint-qos = { version = "0.2.0-alpha.10" }
-blueprint-pricing-engine = { git = "https://github.com/tangle-network/blueprint", branch = "main" }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", rev = "edf64b4f60df4f51fd27ce39ea754bcbc0b3fd54", package = "blueprint-sdk", features = ["std", "tangle", "macros"] }
+blueprint-qos = { git = "https://github.com/tangle-network/blueprint", rev = "edf64b4f60df4f51fd27ce39ea754bcbc0b3fd54", package = "blueprint-qos" }
+blueprint-pricing-engine = { git = "https://github.com/tangle-network/blueprint", rev = "edf64b4f60df4f51fd27ce39ea754bcbc0b3fd54", package = "blueprint-pricing-engine" }
 alloy = { version = "1", features = ["full", "signer-local", "provider-http"] }
 alloy-sol-types = "1"
 alloy-primitives = "1"
@@ -25,7 +25,7 @@ anyhow = "1"
 thiserror = "2"
 axum = { version = "0.7", features = ["json", "macros", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "limit", "trace", "timeout"] }
-prometheus = "0.13"
+prometheus = { version = "0.13", default-features = false }
 futures-util = "0.3"
 tokio-stream = "0.1"
 rust_decimal = "1"
