@@ -9,9 +9,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/tangle-network/modal-inference-blueprint"
 
 [workspace.dependencies]
-blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", rev = "edf64b4f60df4f51fd27ce39ea754bcbc0b3fd54", package = "blueprint-sdk", features = ["std", "tangle", "macros"] }
-blueprint-qos = { git = "https://github.com/tangle-network/blueprint", rev = "edf64b4f60df4f51fd27ce39ea754bcbc0b3fd54", package = "blueprint-qos" }
-blueprint-pricing-engine = { git = "https://github.com/tangle-network/blueprint", rev = "edf64b4f60df4f51fd27ce39ea754bcbc0b3fd54", package = "blueprint-pricing-engine" }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", rev = "be8bd303260d3b1e1df6624eeac92b3ce1f40c38", package = "blueprint-sdk", features = ["std", "tangle", "macros"] }
+blueprint-qos = { git = "https://github.com/tangle-network/blueprint", rev = "be8bd303260d3b1e1df6624eeac92b3ce1f40c38", package = "blueprint-qos" }
+blueprint-pricing-engine = { git = "https://github.com/tangle-network/blueprint", rev = "be8bd303260d3b1e1df6624eeac92b3ce1f40c38", package = "blueprint-pricing-engine" }
 alloy = { version = "1", features = ["full", "signer-local", "provider-http"] }
 alloy-sol-types = "1"
 alloy-primitives = "1"
