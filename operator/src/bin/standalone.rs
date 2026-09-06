@@ -3,12 +3,12 @@
 //!
 //! Usage: cargo run --bin standalone
 
+use blueprint_sdk::std::sync::Arc;
 use modal_inference::config::OperatorConfig;
 use modal_inference::idle::IdleManager;
 use modal_inference::proxy::ModelRegistry;
 use modal_inference::server::{build_router, ModalBackend};
 use modal_inference::{AppStateBuilder, BillingClient, NonceStore};
-use blueprint_sdk::std::sync::Arc;
 
 fn setup_log() {
     use tracing_subscriber::{fmt, EnvFilter};
@@ -50,7 +50,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Err(e) => {
             tracing::warn!(error = %e, "BillingClient init failed — billing disabled");
-            return Err(anyhow::anyhow!("BillingClient required for standalone mode: {e}"));
+            return Err(anyhow::anyhow!(
+                "BillingClient required for standalone mode: {e}"
+            ));
         }
     };
 
@@ -70,7 +72,10 @@ async fn main() -> anyhow::Result<()> {
         }
         let checker = mgr.clone();
         tokio::spawn(async move { checker.run_idle_checker().await });
-        tracing::info!(idle_mins = config.modal.idle_shutdown_minutes, "Idle shutdown enabled");
+        tracing::info!(
+            idle_mins = config.modal.idle_shutdown_minutes,
+            "Idle shutdown enabled"
+        );
         Some(mgr)
     } else {
         None

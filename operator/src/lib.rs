@@ -20,13 +20,13 @@ pub mod server;
 
 // Re-export shared infrastructure so downstream crates can
 // `use modal_inference::*`.
+pub use tangle_inference_core::server::{
+    error_response, extract_x402_spend_auth, payment_required, settle_billing, validate_spend_auth,
+};
 pub use tangle_inference_core::{
     billing, metrics, AppState, AppStateBuilder, BillingClient, CostModel, CostParams,
     FlatRequestCostModel, NonceStore, PerCharCostModel, PerImageCostModel, PerSecondCostModel,
     PerTokenCostModel, RequestGuard, SpendAuthPayload, TaskTypeCostModel,
-};
-pub use tangle_inference_core::server::{
-    error_response, extract_x402_spend_auth, payment_required, settle_billing, validate_spend_auth,
 };
 
 use std::sync::Arc;

@@ -25,17 +25,18 @@ impl ModelRegistry {
             .build()
             .expect("HTTP client");
 
-        let map: HashMap<String, ModelEndpoint> = models
-            .into_iter()
-            .map(|m| (m.name.clone(), m))
-            .collect();
+        let map: HashMap<String, ModelEndpoint> =
+            models.into_iter().map(|m| (m.name.clone(), m)).collect();
 
         info!(models = map.len(), "Model registry initialized");
         for (name, m) in &map {
             info!(name, endpoint = %m.modal_endpoint, task = %m.task_type, "Registered model");
         }
 
-        Self { models: map, client }
+        Self {
+            models: map,
+            client,
+        }
     }
 
     /// Get a model endpoint by name.
@@ -50,7 +51,10 @@ impl ModelRegistry {
 
     /// List models by task type.
     pub fn list_by_type(&self, task_type: &str) -> Vec<&ModelEndpoint> {
-        self.models.values().filter(|m| m.task_type == task_type).collect()
+        self.models
+            .values()
+            .filter(|m| m.task_type == task_type)
+            .collect()
     }
 
     /// Proxy a request to a Modal endpoint.
@@ -61,11 +65,16 @@ impl ModelRegistry {
         body: Bytes,
         content_type: &str,
     ) -> Result<ProxyResponse> {
-        let model = self.get(model_name)
+        let model = self
+            .get(model_name)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {model_name}"))?;
 
         let inference_path = path.unwrap_or_else(|| model.resolve_inference_path());
-        let url = format!("{}{}", model.modal_endpoint.trim_end_matches('/'), inference_path);
+        let url = format!(
+            "{}{}",
+            model.modal_endpoint.trim_end_matches('/'),
+            inference_path
+        );
 
         let mut guard = RequestGuard::new(model_name);
         let start = Instant::now();
@@ -97,7 +106,12 @@ impl ModelRegistry {
 
         let data = response.bytes().await?;
 
-        info!(model = model_name, latency_ms, bytes = data.len(), "Modal proxy success");
+        info!(
+            model = model_name,
+            latency_ms,
+            bytes = data.len(),
+            "Modal proxy success"
+        );
         guard.set_success();
         drop(guard);
 
