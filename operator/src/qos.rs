@@ -84,8 +84,7 @@ pub async fn start_heartbeat(
         loop {
             interval.tick().await;
 
-            match send_heartbeat(&wallet, &rpc_url, registry_addr, service_id, blueprint_id).await
-            {
+            match send_heartbeat(&wallet, &rpc_url, registry_addr, service_id, blueprint_id).await {
                 Ok(()) => {
                     metrics::HEARTBEATS_SENT.inc();
                     tracing::debug!(service_id, blueprint_id, "heartbeat submitted");

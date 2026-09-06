@@ -40,11 +40,14 @@ impl IdleManager {
         // Extract app name from Modal URL: https://org--app-name.modal.run → app-name
         let app_name = extract_modal_app_name(modal_endpoint);
         let mut states = self.states.write().await;
-        states.insert(model_name.to_string(), ModelState {
-            last_request: Instant::now(),
-            stopped: false,
-            modal_app_name: app_name,
-        });
+        states.insert(
+            model_name.to_string(),
+            ModelState {
+                last_request: Instant::now(),
+                stopped: false,
+                modal_app_name: app_name,
+            },
+        );
     }
 
     /// Record a request for a model. Returns true if model is available,
@@ -79,7 +82,8 @@ impl IdleManager {
     pub async fn wake_model(&self, model_name: &str) -> anyhow::Result<()> {
         let app_name = {
             let states = self.states.read().await;
-            states.get(model_name)
+            states
+                .get(model_name)
                 .and_then(|s| s.modal_app_name.clone())
         };
 
@@ -196,9 +200,6 @@ mod tests {
             extract_modal_app_name("https://org--my-app.modal.run/"),
             Some("my-app".to_string())
         );
-        assert_eq!(
-            extract_modal_app_name("http://localhost:8000"),
-            None
-        );
+        assert_eq!(extract_modal_app_name("http://localhost:8000"), None);
     }
 }
