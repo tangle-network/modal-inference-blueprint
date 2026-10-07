@@ -33,11 +33,17 @@ env:
 
 jobs:
   release:
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: System dependencies
+        # protobuf-compiler from apt (ubuntu-latest ships 3.21.x) — avoids the
+        # GitHub-API-backed setup-protoc action. This is the protoc version the
+        # operator builds against locally.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
