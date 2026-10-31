@@ -46,10 +46,6 @@ use crate::idle::IdleManager;
 use crate::proxy::ModelRegistry;
 use crate::server::ModalBackend;
 
-// ---------------------------------------------------------------------------
-// On-chain ABI types
-// ---------------------------------------------------------------------------
-
 sol! {
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     struct InferenceRequest {
@@ -97,10 +93,6 @@ pub async fn run_inference(
         latencyMs: 0,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Background service: HTTP proxy server
-// ---------------------------------------------------------------------------
 
 /// BackgroundService wrapper that builds the AppState and launches the
 /// Axum HTTP proxy for Modal.

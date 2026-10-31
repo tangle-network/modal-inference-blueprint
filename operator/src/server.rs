@@ -4,12 +4,9 @@
 //! metrics, app state container) lives in `tangle-inference-core`. This module
 //! contains the modal-specific backend struct, OpenAI-compatible request
 //! handlers, and task-type aware cost calculation via `TaskTypeCostModel`.
-
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-
+use crate::config::{ModelEndpoint, OperatorConfig};
+use crate::idle::IdleManager;
+use crate::proxy::ModelRegistry;
 use axum::{
     extract::{Json, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
@@ -19,10 +16,10 @@ use axum::{
 };
 use bytes::Bytes;
 use serde::Deserialize;
-use tokio::task::JoinHandle;
-use tower_http::cors::CorsLayer;
-use tower_http::timeout::TimeoutLayer;
-
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tangle_inference_core::server::{
     billing_gate, error_response, metrics_handler, settle_billing,
 };
@@ -30,15 +27,9 @@ use tangle_inference_core::{
     AppState, CostModel, CostParams, FlatRequestCostModel, PerCharCostModel, PerImageCostModel,
     PerSecondCostModel, PerTokenCostModel, SpendAuthPayload, TaskTypeCostModel,
 };
-
-use crate::config::{ModelEndpoint, OperatorConfig};
-use crate::idle::IdleManager;
-use crate::proxy::ModelRegistry;
-
-// ---------------------------------------------------------------------------
-// ModalBackend — attached to AppState via AppStateBuilder
-// ---------------------------------------------------------------------------
-
+use tokio::task::JoinHandle;
+use tower_http::cors::CorsLayer;
+use tower_http::timeout::TimeoutLayer;
 /// Backend state for the Modal proxy. Holds the model registry, idle manager,
 /// pre-built task-type cost model, and a reference to the full operator config
 /// (for modal-specific knobs only — all shared knobs live on `AppState`).
@@ -49,13 +40,11 @@ pub struct ModalBackend {
     pub cost_model: Arc<TaskTypeCostModel>,
     usage: UsageLedger,
 }
-
 struct UsageLedger {
     requests: AtomicU64,
     prompt_tokens: AtomicU64,
     completion_tokens: AtomicU64,
 }
-
 impl UsageLedger {
     const fn new() -> Self {
         Self {
@@ -64,7 +53,6 @@ impl UsageLedger {
             completion_tokens: AtomicU64::new(0),
         }
     }
-
     fn record(&self, prompt_tokens: u64, completion_tokens: u64) {
         self.requests.fetch_add(1, Ordering::Relaxed);
         self.prompt_tokens
@@ -73,7 +61,6 @@ impl UsageLedger {
             .fetch_add(completion_tokens, Ordering::Relaxed);
     }
 }
-
 impl ModalBackend {
     pub fn new(
         config: Arc<OperatorConfig>,
@@ -81,60 +68,30 @@ impl ModalBackend {
         idle_manager: Option<Arc<IdleManager>>,
     ) -> Self {
         let modal = &config.modal;
-
-        let mut per_task: HashMap<String, Box<dyn CostModel>> = HashMap::new();
-        per_task.insert(
-            "chat".into(),
-            Box::new(PerTokenCostModel {
-                price_per_input_token: modal.price_per_input_token,
-                price_per_output_token: modal.price_per_output_token,
-            }),
-        );
-        per_task.insert(
-            "tts".into(),
-            Box::new(PerCharCostModel {
-                price_per_1k_chars: modal.price_per_1k_tts_chars,
-            }),
-        );
-        per_task.insert(
-            "stt".into(),
-            Box::new(PerSecondCostModel {
-                price_per_second: modal.price_per_stt_second,
-            }),
-        );
-        per_task.insert(
-            "image".into(),
-            Box::new(PerImageCostModel {
-                price_per_image: modal.price_per_image,
-            }),
-        );
-        per_task.insert(
-            "video".into(),
-            Box::new(PerSecondCostModel {
-                price_per_second: modal.price_per_video_second,
-            }),
-        );
-        per_task.insert(
-            "music".into(),
-            Box::new(PerSecondCostModel {
-                price_per_second: modal.price_per_music_second,
-            }),
-        );
-        per_task.insert(
-            "embedding".into(),
-            Box::new(PerTokenCostModel {
-                price_per_input_token: modal.price_per_1k_embedding_tokens,
-                price_per_output_token: 0,
-            }),
-        );
-
+        let per_task: HashMap<String, Box<dyn CostModel>> = [
+            (
+                "chat",
+                token_cost(modal.price_per_input_token, modal.price_per_output_token),
+            ),
+            ("tts", char_cost(modal.price_per_1k_tts_chars)),
+            ("stt", second_cost(modal.price_per_stt_second)),
+            ("image", image_cost(modal.price_per_image)),
+            ("video", second_cost(modal.price_per_video_second)),
+            ("music", second_cost(modal.price_per_music_second)),
+            (
+                "embedding",
+                token_cost(modal.price_per_1k_embedding_tokens, 0),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, model)| (key.to_string(), model))
+        .collect();
         let cost_model = Arc::new(TaskTypeCostModel {
             default: Box::new(FlatRequestCostModel {
                 price_per_request: modal.default_price_per_request,
             }),
             per_task,
         });
-
         Self {
             config,
             registry,
@@ -143,11 +100,9 @@ impl ModalBackend {
             usage: UsageLedger::new(),
         }
     }
-
     pub fn record_usage(&self, prompt_tokens: u64, completion_tokens: u64) {
         self.usage.record(prompt_tokens, completion_tokens);
     }
-
     pub fn usage_snapshot(&self) -> (u64, u64, u64) {
         (
             self.usage.requests.load(Ordering::Relaxed),
@@ -155,17 +110,32 @@ impl ModalBackend {
             self.usage.completion_tokens.load(Ordering::Relaxed),
         )
     }
-
     /// Calculate cost for a given task type and usage.
     pub fn calculate_cost(&self, params: &CostParams) -> u64 {
         self.cost_model.calculate_cost(params)
     }
 }
-
-/// Map a model's verbose task_type (e.g. "text-generation", "video-avatar") to
-/// the canonical cost-model key ("chat", "tts", "stt", "image", "video",
-/// "music", "embedding"). Unknown values return `None`, which makes the
-/// `TaskTypeCostModel` fall through to the default (flat per-request) model.
+fn token_cost(input: u64, output: u64) -> Box<dyn CostModel> {
+    Box::new(PerTokenCostModel {
+        price_per_input_token: input,
+        price_per_output_token: output,
+    })
+}
+fn char_cost(price: u64) -> Box<dyn CostModel> {
+    Box::new(PerCharCostModel {
+        price_per_1k_chars: price,
+    })
+}
+fn second_cost(price: u64) -> Box<dyn CostModel> {
+    Box::new(PerSecondCostModel {
+        price_per_second: price,
+    })
+}
+fn image_cost(price: u64) -> Box<dyn CostModel> {
+    Box::new(PerImageCostModel {
+        price_per_image: price,
+    })
+}
 fn canonical_task_key(task_type: &str) -> Option<&'static str> {
     match task_type {
         "tts" | "clone" | "voice-design" => Some("tts"),
@@ -180,11 +150,6 @@ fn canonical_task_key(task_type: &str) -> Option<&'static str> {
         _ => None,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Router wiring
-// ---------------------------------------------------------------------------
-
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/audio/speech", post(synthesize))
@@ -203,7 +168,6 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CorsLayer::permissive())
         .layer(TimeoutLayer::new(Duration::from_secs(120)))
 }
-
 /// Start the HTTP server with graceful shutdown, returns a join handle.
 pub async fn start(
     state: AppState,
@@ -214,11 +178,9 @@ pub async fn start(
         .ok_or_else(|| anyhow::anyhow!("AppState backend is not a ModalBackend"))?;
     let bind = format!("{}:{}", state.server_config.host, state.server_config.port);
     let _ = backend;
-
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(bind = %bind, "Modal HTTP server listening");
-
     let handle = tokio::spawn(async move {
         let shutdown_signal = async move {
             let _ = shutdown_rx.wait_for(|&v| v).await;
@@ -231,16 +193,13 @@ pub async fn start(
             tracing::error!(error = %e, "HTTP server error");
         }
     });
-
     Ok(handle)
 }
-
 fn backend_from(state: &AppState) -> &ModalBackend {
     state
         .backend::<ModalBackend>()
         .expect("AppState backend is ModalBackend")
 }
-
 async fn ensure_model_awake(backend: &ModalBackend, model_name: &str) -> Result<(), Response> {
     if let Some(ref mgr) = backend.idle_manager {
         if !mgr.record_request(model_name).await {
@@ -256,7 +215,6 @@ async fn ensure_model_awake(backend: &ModalBackend, model_name: &str) -> Result<
     }
     Ok(())
 }
-
 fn resolve_model<'a>(
     backend: &'a ModalBackend,
     name: Option<&str>,
@@ -270,7 +228,6 @@ fn resolve_model<'a>(
             .next()
     })
 }
-
 /// Wake the model, proxy its request, and settle the authorized cost.
 #[expect(
     clippy::too_many_arguments,
@@ -290,7 +247,6 @@ async fn proxy_and_settle(
     if let Err(r) = ensure_model_awake(backend, model_name).await {
         return r;
     }
-
     match backend
         .registry
         .proxy_request(model_name, path, payload, content_type)
@@ -319,7 +275,6 @@ async fn proxy_and_settle(
         ),
     }
 }
-
 fn usage_from_body(data: &[u8]) -> (u64, u64) {
     serde_json::from_slice::<serde_json::Value>(data)
         .ok()
@@ -338,7 +293,6 @@ fn usage_from_body(data: &[u8]) -> (u64, u64) {
         })
         .unwrap_or((0, 0))
 }
-
 async fn usage_report(State(state): State<AppState>) -> impl IntoResponse {
     let backend = backend_from(&state);
     let (requests, prompt_tokens, completion_tokens) = backend.usage_snapshot();
@@ -348,7 +302,6 @@ async fn usage_report(State(state): State<AppState>) -> impl IntoResponse {
         "completion_tokens": completion_tokens,
     }))
 }
-
 #[expect(
     clippy::result_large_err,
     reason = "HTTP handlers return this error response directly without an extra allocation."
@@ -363,11 +316,6 @@ fn json_payload(value: &serde_json::Value) -> Result<Bytes, Response> {
         )
     })
 }
-
-// ---------------------------------------------------------------------------
-// Request types
-// ---------------------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct SpeechRequest {
     model: Option<String>,
@@ -376,7 +324,6 @@ struct SpeechRequest {
     response_format: Option<String>,
     spend_auth: Option<SpendAuthPayload>,
 }
-
 #[derive(Deserialize)]
 struct ChatCompletionRequest {
     model: Option<String>,
@@ -387,13 +334,11 @@ struct ChatCompletionRequest {
     temperature: f32,
     spend_auth: Option<SpendAuthPayload>,
 }
-
 #[derive(Deserialize)]
 struct ChatMessage {
     role: String,
     content: String,
 }
-
 #[derive(Deserialize)]
 struct ImageGenerationRequest {
     model: Option<String>,
@@ -402,7 +347,6 @@ struct ImageGenerationRequest {
     n: u32,
     spend_auth: Option<SpendAuthPayload>,
 }
-
 #[derive(Deserialize)]
 struct VideoGenerationRequest {
     model: Option<String>,
@@ -411,14 +355,12 @@ struct VideoGenerationRequest {
     duration_seconds: u32,
     spend_auth: Option<SpendAuthPayload>,
 }
-
 #[derive(Deserialize)]
 struct EmbeddingRequest {
     model: Option<String>,
     input: serde_json::Value,
     spend_auth: Option<SpendAuthPayload>,
 }
-
 fn default_max_tokens() -> u32 {
     512
 }
@@ -431,11 +373,6 @@ fn default_image_n() -> u32 {
 fn default_video_duration() -> u32 {
     5
 }
-
-// ---------------------------------------------------------------------------
-// Handlers
-// ---------------------------------------------------------------------------
-
 /// POST /v1/audio/speech — OpenAI-compatible TTS
 async fn synthesize(
     State(state): State<AppState>,
@@ -451,7 +388,6 @@ async fn synthesize(
             "no_model",
         );
     };
-
     let chars = body.input.len() as u64;
     let cost_params = CostParams {
         task_type: Some("tts".into()),
@@ -462,13 +398,11 @@ async fn synthesize(
         extra: HashMap::from([("characters".into(), chars.max(500))]),
         ..cost_params.clone()
     });
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, body.spend_auth, estimated_cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     let payload = serde_json::json!({
         "text": body.input,
         "voice_id": body.voice.as_deref().unwrap_or("default"),
@@ -478,7 +412,6 @@ async fn synthesize(
         Ok(b) => b,
         Err(r) => return r,
     };
-
     proxy_and_settle(
         &state,
         backend,
@@ -492,7 +425,6 @@ async fn synthesize(
     )
     .await
 }
-
 /// POST /v1/audio/transcriptions — OpenAI-compatible STT
 async fn transcribe(
     State(state): State<AppState>,
@@ -500,11 +432,9 @@ async fn transcribe(
     mut multipart: Multipart,
 ) -> Response {
     let backend = backend_from(&state);
-
     let mut audio_data: Option<Bytes> = None;
     let mut model_name_field = "default".to_string();
     let mut spend_auth_json: Option<String> = None;
-
     while let Ok(Some(field)) = multipart.next_field().await {
         match field.name() {
             Some("file") => audio_data = field.bytes().await.ok(),
@@ -513,7 +443,6 @@ async fn transcribe(
             _ => {}
         }
     }
-
     let Some(audio) = audio_data else {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -530,7 +459,6 @@ async fn transcribe(
             "no_model",
         );
     };
-
     // 16kHz mono 16-bit PCM = 32,000 bytes/sec
     let centiseconds = (audio.len() as u64 * 100) / 32000;
     let cost_params = CostParams {
@@ -542,17 +470,14 @@ async fn transcribe(
         extra: HashMap::from([("centiseconds".into(), centiseconds.max(3000))]),
         ..cost_params.clone()
     });
-
     let body_spend_auth: Option<SpendAuthPayload> = spend_auth_json
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, body_spend_auth, estimated_cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     proxy_and_settle(
         &state,
         backend,
@@ -566,7 +491,6 @@ async fn transcribe(
     )
     .await
 }
-
 /// POST /v1/chat/completions — needs custom settlement (parses usage from response).
 async fn chat_completions(
     State(state): State<AppState>,
@@ -582,7 +506,6 @@ async fn chat_completions(
             "no_model",
         );
     };
-
     let est_prompt: u32 = body
         .messages
         .iter()
@@ -594,17 +517,14 @@ async fn chat_completions(
         completion_tokens: body.max_tokens,
         ..Default::default()
     });
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, body.spend_auth, estimated_cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     if let Err(r) = ensure_model_awake(backend, &model.name).await {
         return r;
     }
-
     let payload = serde_json::json!({
         "model": model.name,
         "messages": body.messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
@@ -615,7 +535,6 @@ async fn chat_completions(
         Ok(b) => b,
         Err(r) => return r,
     };
-
     match backend
         .registry
         .proxy_request(&model.name, None, payload_bytes, "application/json")
@@ -633,7 +552,6 @@ async fn chat_completions(
                     ))
                 })
                 .unwrap_or((est_prompt, body.max_tokens));
-
             backend.record_usage(u64::from(pt), u64::from(ct));
             if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
                 let cost = backend.calculate_cost(&CostParams {
@@ -646,7 +564,6 @@ async fn chat_completions(
                     tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
                 }
             }
-
             (
                 StatusCode::OK,
                 [("content-type", resp.content_type.as_str())],
@@ -662,7 +579,6 @@ async fn chat_completions(
         ),
     }
 }
-
 /// POST /v1/images/generations
 async fn images_generations(
     State(state): State<AppState>,
@@ -678,25 +594,21 @@ async fn images_generations(
             "no_model",
         );
     };
-
     let cost = backend.calculate_cost(&CostParams {
         task_type: Some("image".into()),
         extra: HashMap::from([("images".into(), body.n.max(1) as u64)]),
         ..Default::default()
     });
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, body.spend_auth, cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     let payload = serde_json::json!({"model": model.name, "prompt": body.prompt, "n": body.n});
     let payload_bytes = match json_payload(&payload) {
         Ok(b) => b,
         Err(r) => return r,
     };
-
     proxy_and_settle(
         &state,
         backend,
@@ -710,7 +622,6 @@ async fn images_generations(
     )
     .await
 }
-
 /// POST /v1/videos/generations
 async fn videos_generations(
     State(state): State<AppState>,
@@ -726,25 +637,21 @@ async fn videos_generations(
             "no_model",
         );
     };
-
     let cost = backend.calculate_cost(&CostParams {
         task_type: Some("video".into()),
         extra: HashMap::from([("centiseconds".into(), (body.duration_seconds as u64) * 100)]),
         ..Default::default()
     });
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, body.spend_auth, cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     let payload = serde_json::json!({"model": model.name, "prompt": body.prompt, "duration_seconds": body.duration_seconds});
     let payload_bytes = match json_payload(&payload) {
         Ok(b) => b,
         Err(r) => return r,
     };
-
     proxy_and_settle(
         &state,
         backend,
@@ -758,7 +665,6 @@ async fn videos_generations(
     )
     .await
 }
-
 /// POST /v1/embeddings
 async fn embeddings(
     State(state): State<AppState>,
@@ -774,7 +680,6 @@ async fn embeddings(
             "no_model",
         );
     };
-
     let approx_chars: u64 = match &body.input {
         serde_json::Value::String(s) => s.len() as u64,
         serde_json::Value::Array(arr) => arr
@@ -788,19 +693,16 @@ async fn embeddings(
         prompt_tokens: (approx_chars / 4).max(1) as u32,
         ..Default::default()
     });
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, body.spend_auth, cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     let payload = serde_json::json!({"model": model.name, "input": body.input});
     let payload_bytes = match json_payload(&payload) {
         Ok(b) => b,
         Err(r) => return r,
     };
-
     proxy_and_settle(
         &state,
         backend,
@@ -814,7 +716,6 @@ async fn embeddings(
     )
     .await
 }
-
 /// POST /proxy/:model/*path — raw proxy to any model endpoint.
 /// SpendAuth via X-Payment-Signature. Task-type drives cost via `TaskTypeCostModel`.
 async fn proxy_raw(
@@ -828,7 +729,6 @@ async fn proxy_raw(
         .registry
         .get(&model)
         .and_then(|m| canonical_task_key(&m.task_type));
-
     let settle_cost = backend.calculate_cost(&CostParams {
         task_type: task_key.map(String::from),
         extra: HashMap::from([("images".into(), 1)]),
@@ -848,13 +748,11 @@ async fn proxy_raw(
     } else {
         settle_cost
     };
-
     let (spend_auth, preauth_amount) =
         match billing_gate(&state, &headers, None, estimated_cost).await {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-
     let proxy_path = format!("/{path}");
     proxy_and_settle(
         &state,
@@ -869,11 +767,6 @@ async fn proxy_raw(
     )
     .await
 }
-
-// ---------------------------------------------------------------------------
-// Read-only endpoints
-// ---------------------------------------------------------------------------
-
 async fn list_models(State(state): State<AppState>) -> Json<serde_json::Value> {
     let backend = backend_from(&state);
     let models: Vec<serde_json::Value> = backend
@@ -889,15 +782,12 @@ async fn list_models(State(state): State<AppState>) -> Json<serde_json::Value> {
             })
         })
         .collect();
-
     Json(serde_json::json!({ "object": "list", "data": models }))
 }
-
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let backend = backend_from(&state);
     let model_health = backend.registry.health_check_all().await;
     let all_ok = model_health.iter().all(|h| h.status == "ok");
-
     let models: Vec<serde_json::Value> = model_health
         .iter()
         .map(|h| {
@@ -911,7 +801,6 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             })
         })
         .collect();
-
     Json(serde_json::json!({
         "status": if all_ok { "ok" } else { "degraded" },
         "operator": backend.config.name,
@@ -920,12 +809,10 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "metrics": tangle_inference_core::metrics::health_summary(),
     }))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::TangleConfig;
-
     #[test]
     fn test_canonical_task_key() {
         assert_eq!(canonical_task_key("tts"), Some("tts"));
@@ -940,7 +827,6 @@ mod tests {
         assert_eq!(canonical_task_key("embedding"), Some("embedding"));
         assert_eq!(canonical_task_key("unknown-xyz"), None);
     }
-
     #[test]
     fn test_modal_backend_cost_dispatch() {
         let config = Arc::new(OperatorConfig {
@@ -965,13 +851,11 @@ mod tests {
             },
             qos: None,
         });
-
         let registry = ModelRegistry::new(vec![]);
         let backend = ModalBackend::new(config, registry, None);
         assert_eq!(backend.usage_snapshot(), (0, 0, 0));
         backend.record_usage(3, 4);
         assert_eq!(backend.usage_snapshot(), (1, 3, 4));
-
         // chat
         let cost = backend.calculate_cost(&CostParams {
             task_type: Some("chat".into()),
@@ -980,7 +864,6 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(cost, 100 * 2 + 50 * 5);
-
         // tts
         let cost = backend.calculate_cost(&CostParams {
             task_type: Some("tts".into()),
@@ -988,7 +871,6 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(cost, (2000 * 10_000) / 1000);
-
         // stt
         let cost = backend.calculate_cost(&CostParams {
             task_type: Some("stt".into()),
@@ -996,7 +878,6 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(cost, (500 * 100) / 100);
-
         // image
         let cost = backend.calculate_cost(&CostParams {
             task_type: Some("image".into()),
@@ -1004,7 +885,6 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(cost, 3 * 500);
-
         // unknown → default flat
         let cost = backend.calculate_cost(&CostParams {
             task_type: Some("unknown".into()),
@@ -1012,7 +892,6 @@ mod tests {
         });
         assert_eq!(cost, 42);
     }
-
     #[allow(non_snake_case)]
     fn TangleConfig_for_test() -> TangleConfig {
         serde_json::from_str(
