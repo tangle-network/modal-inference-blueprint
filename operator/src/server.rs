@@ -6,6 +6,7 @@
 //! handlers, and task-type aware cost calculation via `TaskTypeCostModel`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,6 +47,31 @@ pub struct ModalBackend {
     pub registry: ModelRegistry,
     pub idle_manager: Option<Arc<IdleManager>>,
     pub cost_model: Arc<TaskTypeCostModel>,
+    usage: UsageLedger,
+}
+
+struct UsageLedger {
+    requests: AtomicU64,
+    prompt_tokens: AtomicU64,
+    completion_tokens: AtomicU64,
+}
+
+impl UsageLedger {
+    const fn new() -> Self {
+        Self {
+            requests: AtomicU64::new(0),
+            prompt_tokens: AtomicU64::new(0),
+            completion_tokens: AtomicU64::new(0),
+        }
+    }
+
+    fn record(&self, prompt_tokens: u64, completion_tokens: u64) {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.prompt_tokens
+            .fetch_add(prompt_tokens, Ordering::Relaxed);
+        self.completion_tokens
+            .fetch_add(completion_tokens, Ordering::Relaxed);
+    }
 }
 
 impl ModalBackend {
@@ -114,7 +140,20 @@ impl ModalBackend {
             registry,
             idle_manager,
             cost_model,
+            usage: UsageLedger::new(),
         }
+    }
+
+    pub fn record_usage(&self, prompt_tokens: u64, completion_tokens: u64) {
+        self.usage.record(prompt_tokens, completion_tokens);
+    }
+
+    pub fn usage_snapshot(&self) -> (u64, u64, u64) {
+        (
+            self.usage.requests.load(Ordering::Relaxed),
+            self.usage.prompt_tokens.load(Ordering::Relaxed),
+            self.usage.completion_tokens.load(Ordering::Relaxed),
+        )
     }
 
     /// Calculate cost for a given task type and usage.
@@ -152,6 +191,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/audio/transcriptions", post(transcribe))
         .route("/v1/audio/models", get(list_models))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/usage", get(usage_report))
         .route("/v1/images/generations", post(images_generations))
         .route("/v1/videos/generations", post(videos_generations))
         .route("/v1/embeddings", post(embeddings))
@@ -257,6 +297,8 @@ async fn proxy_and_settle(
         .await
     {
         Ok(resp) => {
+            let (prompt_tokens, completion_tokens) = usage_from_body(&resp.data);
+            backend.record_usage(prompt_tokens, completion_tokens);
             if let (Some(ref sa), Some(preauth)) = (spend_auth, preauth_amount) {
                 if let Err(e) = settle_billing(&state.billing, sa, preauth, actual_cost).await {
                     tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
@@ -276,6 +318,35 @@ async fn proxy_and_settle(
             "modal_error",
         ),
     }
+}
+
+fn usage_from_body(data: &[u8]) -> (u64, u64) {
+    serde_json::from_slice::<serde_json::Value>(data)
+        .ok()
+        .and_then(|value| {
+            let usage = value.get("usage")?;
+            Some((
+                usage
+                    .get("prompt_tokens")
+                    .and_then(|token| token.as_u64())
+                    .unwrap_or(0),
+                usage
+                    .get("completion_tokens")
+                    .and_then(|token| token.as_u64())
+                    .unwrap_or(0),
+            ))
+        })
+        .unwrap_or((0, 0))
+}
+
+async fn usage_report(State(state): State<AppState>) -> impl IntoResponse {
+    let backend = backend_from(&state);
+    let (requests, prompt_tokens, completion_tokens) = backend.usage_snapshot();
+    Json(serde_json::json!({
+        "requests": requests,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }))
 }
 
 #[expect(
@@ -563,6 +634,7 @@ async fn chat_completions(
                 })
                 .unwrap_or((est_prompt, body.max_tokens));
 
+            backend.record_usage(u64::from(pt), u64::from(ct));
             if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
                 let cost = backend.calculate_cost(&CostParams {
                     task_type: Some("chat".into()),
@@ -896,6 +968,9 @@ mod tests {
 
         let registry = ModelRegistry::new(vec![]);
         let backend = ModalBackend::new(config, registry, None);
+        assert_eq!(backend.usage_snapshot(), (0, 0, 0));
+        backend.record_usage(3, 4);
+        assert_eq!(backend.usage_snapshot(), (1, 3, 4));
 
         // chat
         let cost = backend.calculate_cost(&CostParams {
