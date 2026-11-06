@@ -33,7 +33,7 @@ fn registration_payload(config: &OperatorConfig) -> Vec<u8> {
 tangle_inference_core::run_operator!(
     OperatorConfig::load(None),
     registration_payload,
-    |config| modal_inference::router_with_config(config),
+    modal_inference::router_with_config,
     |config| ModalInferenceServer { config },
     qos
 );
