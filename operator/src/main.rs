@@ -1,9 +1,13 @@
 use alloy_sol_types::SolValue;
 use modal_inference::{config::OperatorConfig, ModalInferenceServer};
 fn registration_payload(config: &OperatorConfig) -> Vec<u8> {
+    let gpu = config
+        .gpu
+        .as_ref()
+        .expect("supply remote GPU facts for registration");
     assert!(
-        config.gpu.expected_gpu_count > 0 && config.gpu.min_vram_mib > 0,
-        "set remote GPU facts from the SDK lease receipt"
+        gpu.min_vram_mib > 0,
+        "supply VRAM from the provider allocation receipt"
     );
     let models: Vec<String> = config
         .modal
@@ -20,13 +24,8 @@ fn registration_payload(config: &OperatorConfig) -> Vec<u8> {
     (
         models,
         tasks,
-        config.gpu.expected_gpu_count,
-        config.gpu.min_vram_mib,
-        config
-            .gpu
-            .gpu_model
-            .clone()
-            .expect("GPU catalog class required"),
+        gpu.min_vram_mib,
+        gpu.gpu_model.clone().expect("GPU catalog class required"),
         format!("http://{}:{}", config.server.host, config.server.port),
     )
         .abi_encode()
@@ -34,7 +33,7 @@ fn registration_payload(config: &OperatorConfig) -> Vec<u8> {
 tangle_inference_core::run_operator!(
     OperatorConfig::load(None),
     registration_payload,
-    modal_inference::router(),
+    |config| modal_inference::router_with_config(config),
     |config| ModalInferenceServer { config },
     qos
 );

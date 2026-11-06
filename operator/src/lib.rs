@@ -17,6 +17,7 @@ pub use tangle_inference_core::{
 use std::sync::Arc;
 
 use alloy_sol_types::sol;
+use blueprint_sdk::extract::Context;
 use blueprint_sdk::macros::debug_job;
 use blueprint_sdk::router::Router;
 use blueprint_sdk::runner::error::RunnerError;
@@ -52,25 +53,91 @@ pub const INFERENCE_JOB: u8 = 0;
 
 /// Tangle job router — single generic inference job.
 /// The `model` field in the request selects the Modal endpoint.
-pub fn router() -> Router {
-    Router::new().route(
-        INFERENCE_JOB,
-        run_inference
-            .layer(TangleLayer)
-            .layer(blueprint_sdk::tee::TeeLayer::new()),
-    )
+pub fn router_with_config(config: Arc<OperatorConfig>) -> Router {
+    Router::new()
+        .route(
+            INFERENCE_JOB,
+            run_inference
+                .layer(TangleLayer)
+                .layer(blueprint_sdk::tee::TeeLayer::new()),
+        )
+        .with_context(Arc::new(ModelRegistry::new(config.modal.models.clone())))
 }
 
 #[debug_job]
 pub async fn run_inference(
+    Context(registry): Context<Arc<ModelRegistry>>,
     TangleArg(req): TangleArg<InferenceRequest>,
-) -> TangleResult<InferenceResult> {
-    TangleResult(InferenceResult {
-        outputData: Vec::new().into(),
-        unitsConsumed: 0,
-        outputType: req.outputType,
-        latencyMs: 0,
-    })
+) -> Result<TangleResult<InferenceResult>, RunnerError> {
+    let execute = async {
+        let model = registry
+            .get(&req.model)
+            .ok_or_else(|| anyhow::anyhow!("model not configured"))?;
+        let mut input_units = 0;
+        let (body, content_type) = match req.inputType.as_str() {
+            "audio" | "audio/wav" => (bytes::Bytes::from(req.inputData.to_vec()), "audio/wav"),
+            "json" | "application/json" => {
+                serde_json::from_slice::<serde_json::Value>(&req.inputData)?;
+                (
+                    bytes::Bytes::from(req.inputData.to_vec()),
+                    "application/json",
+                )
+            }
+            "text" => {
+                let text = std::str::from_utf8(&req.inputData)?;
+                let value = if let Some(value) = serde_json::from_str::<serde_json::Value>(text)
+                    .ok()
+                    .filter(serde_json::Value::is_object)
+                {
+                    value
+                } else {
+                    match model.task_type.as_str() {
+                        "tts" => {
+                            input_units = u32::try_from(text.chars().count())?;
+                            serde_json::json!({"text":text,"voice_id":"default","format":"wav"})
+                        }
+                        "chat" | "text" | "text-generation" => {
+                            serde_json::json!({"model":req.model,
+                        "messages":[{"role":"user","content":text}],"stream":false})
+                        }
+                        "embedding" => serde_json::json!({"model":req.model,"input":text}),
+                        _ => serde_json::json!({"prompt":text}),
+                    }
+                };
+                (
+                    bytes::Bytes::from(serde_json::to_vec(&value)?),
+                    "application/json",
+                )
+            }
+            _ => anyhow::bail!("unsupported inputType; use text, json or audio"),
+        };
+        let output = registry
+            .proxy_request(&req.model, None, body, content_type)
+            .await?;
+        anyhow::ensure!(
+            !output.data.is_empty(),
+            "provider returned an empty inference result"
+        );
+        let units = serde_json::from_slice::<serde_json::Value>(&output.data)
+            .ok()
+            .and_then(|value| {
+                value["usage"]["total_tokens"]
+                    .as_u64()
+                    .or(value["units_consumed"].as_u64())
+            })
+            .map(u32::try_from)
+            .transpose()?
+            .unwrap_or(input_units);
+        Ok::<_, anyhow::Error>(TangleResult(InferenceResult {
+            outputData: output.data.to_vec().into(),
+            unitsConsumed: units,
+            outputType: req.outputType,
+            latencyMs: u32::try_from(output.latency_ms)?,
+        }))
+    };
+    execute
+        .await
+        .map_err(|error| RunnerError::Other(error.to_string().into()))
 }
 
 /// BackgroundService wrapper that builds the AppState and launches the
@@ -79,64 +146,44 @@ pub struct ModalInferenceServer {
     pub config: Arc<OperatorConfig>,
 }
 
+pub fn app_state(config: Arc<OperatorConfig>) -> anyhow::Result<AppState> {
+    let billing = Arc::new(BillingClient::new(&config.tangle, &config.billing)?);
+    let operator = billing.operator_address();
+    let nonces = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
+    let registry = ModelRegistry::new(config.modal.models.clone());
+    AppStateBuilder::new()
+        .billing(billing)
+        .nonce_store(nonces)
+        .server_config(Arc::new(config.server.clone()))
+        .billing_config(Arc::new(config.billing.clone()))
+        .tangle_config(Arc::new(config.tangle.clone()))
+        .operator_address(operator)
+        .backend(ModalBackend::new(config, registry))
+        .build()
+}
+
 impl BackgroundService for ModalInferenceServer {
     async fn start(&self) -> Result<oneshot::Receiver<Result<(), RunnerError>>, RunnerError> {
         let (tx, rx) = oneshot::channel();
         let config = self.config.clone();
-
         tokio::spawn(async move {
-            let registry = ModelRegistry::new(config.modal.models.clone());
-
-            let billing_client = match BillingClient::new(&config.tangle, &config.billing) {
-                Ok(b) => Arc::new(b),
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to create billing client");
-                    let _ = tx.send(Err(RunnerError::Other(e.to_string().into())));
+            let state = match app_state(config) {
+                Ok(state) => state,
+                Err(error) => {
+                    let _ = tx.send(Err(RunnerError::Other(error.to_string().into())));
                     return;
                 }
             };
-
-            let operator_address = billing_client.operator_address();
-            let nonce_store = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
-            let backend = ModalBackend::new(config.clone(), registry);
-
-            let state = match AppStateBuilder::new()
-                .billing(billing_client)
-                .nonce_store(nonce_store)
-                .server_config(Arc::new(config.server.clone()))
-                .billing_config(Arc::new(config.billing.clone()))
-                .tangle_config(Arc::new(config.tangle.clone()))
-                .operator_address(operator_address)
-                .backend(backend)
-                .build()
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to build AppState");
-                    let _ = tx.send(Err(RunnerError::Other(e.to_string().into())));
-                    return;
-                }
-            };
-
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-            match server::start(state, shutdown_rx).await {
-                Ok(handle) => {
-                    tracing::info!("Modal HTTP server started — background service ready");
-                    // Wait for the server to actually shut down before signaling completion.
-                    // The oneshot `tx` signals "service finished" to BlueprintRunner.
-                    // shutdown_tx must stay alive — dropping it triggers graceful shutdown.
-                    let _ = handle.await;
-                    drop(shutdown_tx);
-                    let _ = tx.send(Ok(()));
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to start HTTP server");
-                    let _ = tx.send(Err(RunnerError::Other(e.to_string().into())));
-                }
-            }
+            let result = match server::start(state, shutdown_rx).await {
+                Ok(handle) => handle
+                    .await
+                    .map_err(|error| RunnerError::Other(error.to_string().into())),
+                Err(error) => Err(RunnerError::Other(error.to_string().into())),
+            };
+            drop(shutdown_tx);
+            let _ = tx.send(result);
         });
-
         Ok(rx)
     }
 }

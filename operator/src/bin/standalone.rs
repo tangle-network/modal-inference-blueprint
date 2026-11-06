@@ -1,85 +1,17 @@
-//! Standalone operator — runs HTTP server + metrics reporting without Tangle SDK.
-//! For local testing against a real Modal deployment or local endpoints.
-//!
-//! Usage: cargo run --bin standalone
-
-use blueprint_sdk::std::sync::Arc;
-use modal_inference::config::OperatorConfig;
-use modal_inference::proxy::ModelRegistry;
-use modal_inference::server::{build_router, ModalBackend};
-use modal_inference::{AppStateBuilder, BillingClient, NonceStore};
-
-fn setup_log() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt().with_env_filter(filter).init();
-}
+//! Run the same provider adapter as the chain service, without a chain runner.
+use modal_inference::{app_state, config::OperatorConfig, server::build_router};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    setup_log();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
     dotenvy::dotenv().ok();
-
-    tracing::info!("Modal Inference Operator (standalone mode)");
-
-    let config = OperatorConfig::load(None)?;
-    tracing::info!(
-        name = %config.name,
-        models = config.modal.models.len(),
-        port = config.server.port,
-        "Config loaded"
-    );
-
-    for model in &config.modal.models {
-        tracing::info!(
-            name = %model.name,
-            task = %model.task_type,
-            endpoint = %model.modal_endpoint,
-            "Model"
-        );
-    }
-
-    let config = Arc::new(config);
-
-    // Initialize billing client
-    let billing_client = match BillingClient::new(&config.tangle, &config.billing) {
-        Ok(client) => {
-            tracing::info!(operator = %client.operator_address(), "Billing enabled");
-            Arc::new(client)
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "BillingClient init failed — billing disabled");
-            return Err(anyhow::anyhow!(
-                "BillingClient required for standalone mode: {e}"
-            ));
-        }
-    };
-
-    let operator_address = billing_client.operator_address();
-    let nonce_store = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
-
-    let registry = ModelRegistry::new(config.modal.models.clone());
-
-    let backend = ModalBackend::new(config.clone(), registry);
-
-    let state = AppStateBuilder::new()
-        .billing(billing_client)
-        .nonce_store(nonce_store)
-        .server_config(Arc::new(config.server.clone()))
-        .billing_config(Arc::new(config.billing.clone()))
-        .tangle_config(Arc::new(config.tangle.clone()))
-        .operator_address(operator_address)
-        .max_concurrent(config.server.max_concurrent_requests)
-        .backend(backend)
-        .build()
-        .map_err(|e| anyhow::anyhow!("AppState build failed: {e}"))?;
-
-    let app = build_router(state);
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    tracing::info!(%addr, "HTTP server starting");
-
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
-
+    let config = Arc::new(OperatorConfig::load(None)?);
+    let address = format!("{}:{}", config.server.host, config.server.port);
+    let state = app_state(config)?;
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    axum::serve(listener, build_router(state)).await?;
     Ok(())
 }

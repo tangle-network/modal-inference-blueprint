@@ -11,28 +11,22 @@ pub use tangle_inference_core::{BillingConfig, GpuConfig, ServerConfig, TangleCo
 
 use tangle_inference_core::qos::QoSConfig;
 
-/// Top-level operator configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperatorConfig {
-    /// Human-readable operator name (shown in /health).
     #[serde(default = "default_name")]
     pub name: String,
 
-    /// Tangle network configuration (shared).
     pub tangle: TangleConfig,
 
-    /// HTTP server configuration (shared).
     #[serde(default = "default_server_config")]
     pub server: ServerConfig,
 
-    /// Billing / ShieldedCredits configuration (shared).
     pub billing: BillingConfig,
 
-    /// Task pricing and provider-allocated model endpoints.
     pub modal: ModalConfig,
-    pub gpu: GpuConfig,
+    #[serde(default)]
+    pub gpu: Option<GpuConfig>,
 
-    /// QoS heartbeat configuration (optional — disabled by default).
     #[serde(default)]
     pub qos: Option<QoSConfig>,
 }
@@ -45,66 +39,49 @@ fn default_server_config() -> ServerConfig {
     serde_json::from_str("{}").expect("ServerConfig defaults are valid")
 }
 
-/// Task pricing and endpoints returned by the SDK remote provider.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModalConfig {
     // Task-type pricing (base token units).
-    /// Per input token (chat, text generation).
     #[serde(default)]
     pub price_per_input_token: u64,
-    /// Per output token (chat, text generation).
     #[serde(default)]
     pub price_per_output_token: u64,
-    /// Per 1,000 characters (TTS, voice cloning, voice design).
     #[serde(default)]
     pub price_per_1k_tts_chars: u64,
-    /// Per second of audio (STT, diarize, translate, langid, vad, s2s, speakerid).
     #[serde(default)]
     pub price_per_stt_second: u64,
-    /// Per image (image generation).
     #[serde(default)]
     pub price_per_image: u64,
-    /// Per second of generated video.
     #[serde(default)]
     pub price_per_video_second: u64,
-    /// Per second of generated music.
     #[serde(default)]
     pub price_per_music_second: u64,
-    /// Per 1K embedding tokens.
     #[serde(default)]
     pub price_per_1k_embedding_tokens: u64,
-    /// Flat price per request for fixed-cost jobs (stitch, enhance, convert).
     #[serde(default)]
     pub default_price_per_request: u64,
 
-    /// List of Modal endpoints this operator serves.
     #[serde(default)]
     pub models: Vec<ModelEndpoint>,
+    #[serde(default)]
+    pub idle_shutdown_minutes: Option<u64>,
+    #[serde(default)]
+    pub idle_check_interval_minutes: Option<u64>,
 }
 
-/// A single Modal model endpoint that this operator serves.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEndpoint {
-    /// Model identifier (e.g., "cosyvoice3", "fish-s2-pro", "pyannote").
     pub name: String,
 
-    /// Task type. Determines which `CostModel` sub-entry of `TaskTypeCostModel`
-    /// the request is routed to. Canonical values: `chat`, `tts`, `stt`,
-    /// `image`, `video`, `music`, `embedding`. Any other value falls through
-    /// to the default (flat per-request) cost model.
     #[serde(rename = "type")]
     pub task_type: String,
 
-    /// Modal deployment URL (e.g., "https://your-org--cosyvoice3-service.modal.run").
     pub modal_endpoint: String,
 
-    /// Health check path (default: /health).
     #[serde(default = "default_health_path")]
     pub health_path: String,
 
-    /// Inference path override. Defaults are task-type-specific; see
-    /// [`ModelEndpoint::resolve_inference_path`].
     #[serde(default)]
     pub inference_path: Option<String>,
 }
@@ -114,7 +91,6 @@ fn default_health_path() -> String {
 }
 
 impl ModelEndpoint {
-    /// Returns the inference path based on task type.
     pub fn resolve_inference_path(&self) -> &str {
         if let Some(ref p) = self.inference_path {
             return p;
@@ -148,7 +124,6 @@ impl ModelEndpoint {
 }
 
 impl OperatorConfig {
-    /// Load config from file, env vars, and CLI overrides.
     pub fn load(path: Option<&str>) -> anyhow::Result<Self> {
         let mut builder = config::Config::builder();
 

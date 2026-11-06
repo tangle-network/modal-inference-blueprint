@@ -33,7 +33,6 @@ contract InferenceBSM is InferenceBSMBase {
     struct OperatorInfo {
         string[] models;
         string[] taskTypes;
-        uint32 gpuCount;
         uint32 gpuVramMib;
         string gpuModel;
         string endpoint;
@@ -199,13 +198,10 @@ contract InferenceBSM is InferenceBSMBase {
         (
             string[] memory models,
             string[] memory taskTypes,
-            uint32 gpuCount,
             uint32 gpuVramMib,
             string memory gpuModel,
             string memory endpoint
-        ) = abi.decode(registrationInputs, (string[], string[], uint32, uint32, string, string));
-        require(gpuCount > 0 && gpuVramMib > 0 && bytes(gpuModel).length > 0, "GPU capability required");
-        require(models.length > 0 && models.length == taskTypes.length, "model task mismatch");
+        ) = abi.decode(registrationInputs, (string[], string[], uint32, string, string));
         for (uint256 i = 0; i < models.length; i++) {
             bytes32 key = keccak256(bytes(models[i]));
             ModelConfig storage mc = modelConfigs[key];
@@ -215,7 +211,6 @@ contract InferenceBSM is InferenceBSMBase {
         operators[operator] = OperatorInfo({
             models: models,
             taskTypes: taskTypes,
-            gpuCount: gpuCount,
             gpuVramMib: gpuVramMib,
             gpuModel: gpuModel,
             endpoint: endpoint,
