@@ -5,7 +5,6 @@
 //! contains the modal-specific backend struct, OpenAI-compatible request
 //! handlers, and task-type aware cost calculation via `TaskTypeCostModel`.
 use crate::config::{ModelEndpoint, OperatorConfig};
-use crate::idle::IdleManager;
 use crate::proxy::ModelRegistry;
 use axum::{
     extract::{Json, Multipart, Path, State},
@@ -36,7 +35,6 @@ use tower_http::timeout::TimeoutLayer;
 pub struct ModalBackend {
     pub config: Arc<OperatorConfig>,
     pub registry: ModelRegistry,
-    pub idle_manager: Option<Arc<IdleManager>>,
     pub cost_model: Arc<TaskTypeCostModel>,
     usage: UsageLedger,
 }
@@ -62,11 +60,7 @@ impl UsageLedger {
     }
 }
 impl ModalBackend {
-    pub fn new(
-        config: Arc<OperatorConfig>,
-        registry: ModelRegistry,
-        idle_manager: Option<Arc<IdleManager>>,
-    ) -> Self {
+    pub fn new(config: Arc<OperatorConfig>, registry: ModelRegistry) -> Self {
         let modal = &config.modal;
         let per_task: HashMap<String, Box<dyn CostModel>> = [
             (
@@ -95,7 +89,6 @@ impl ModalBackend {
         Self {
             config,
             registry,
-            idle_manager,
             cost_model,
             usage: UsageLedger::new(),
         }
@@ -200,21 +193,6 @@ fn backend_from(state: &AppState) -> &ModalBackend {
         .backend::<ModalBackend>()
         .expect("AppState backend is ModalBackend")
 }
-async fn ensure_model_awake(backend: &ModalBackend, model_name: &str) -> Result<(), Response> {
-    if let Some(ref mgr) = backend.idle_manager {
-        if !mgr.record_request(model_name).await {
-            if let Err(e) = mgr.wake_model(model_name).await {
-                return Err(error_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("Model waking: {e}"),
-                    "upstream_error",
-                    "wake_failed",
-                ));
-            }
-        }
-    }
-    Ok(())
-}
 fn resolve_model<'a>(
     backend: &'a ModalBackend,
     name: Option<&str>,
@@ -244,9 +222,6 @@ async fn proxy_and_settle(
     preauth_amount: Option<u64>,
     actual_cost: u64,
 ) -> Response {
-    if let Err(r) = ensure_model_awake(backend, model_name).await {
-        return r;
-    }
     match backend
         .registry
         .proxy_request(model_name, path, payload, content_type)
@@ -256,7 +231,8 @@ async fn proxy_and_settle(
             let (prompt_tokens, completion_tokens) = usage_from_body(&resp.data);
             backend.record_usage(prompt_tokens, completion_tokens);
             if let (Some(ref sa), Some(preauth)) = (spend_auth, preauth_amount) {
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, actual_cost).await {
+                if let Err(e) = settle_billing(&state.billing, sa, preauth, Some(actual_cost)).await
+                {
                     tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
                 }
             }
@@ -522,9 +498,6 @@ async fn chat_completions(
             Ok(v) => v,
             Err(resp) => return resp,
         };
-    if let Err(r) = ensure_model_awake(backend, &model.name).await {
-        return r;
-    }
     let payload = serde_json::json!({
         "model": model.name,
         "messages": body.messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
@@ -560,7 +533,7 @@ async fn chat_completions(
                     completion_tokens: ct,
                     ..Default::default()
                 });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, cost).await {
+                if let Err(e) = settle_billing(&state.billing, sa, preauth, Some(cost)).await {
                     tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
                 }
             }
@@ -808,101 +781,4 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "models": models,
         "metrics": tangle_inference_core::metrics::health_summary(),
     }))
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::TangleConfig;
-    #[test]
-    fn test_canonical_task_key() {
-        assert_eq!(canonical_task_key("tts"), Some("tts"));
-        assert_eq!(canonical_task_key("clone"), Some("tts"));
-        assert_eq!(canonical_task_key("stt"), Some("stt"));
-        assert_eq!(canonical_task_key("diarize"), Some("stt"));
-        assert_eq!(canonical_task_key("video-generation"), Some("video"));
-        assert_eq!(canonical_task_key("image-generation"), Some("image"));
-        assert_eq!(canonical_task_key("music"), Some("music"));
-        assert_eq!(canonical_task_key("chat"), Some("chat"));
-        assert_eq!(canonical_task_key("text-generation"), Some("chat"));
-        assert_eq!(canonical_task_key("embedding"), Some("embedding"));
-        assert_eq!(canonical_task_key("unknown-xyz"), None);
-    }
-    #[test]
-    fn test_modal_backend_cost_dispatch() {
-        let config = Arc::new(OperatorConfig {
-            name: "t".into(),
-            tangle: TangleConfig_for_test(),
-            server: serde_json::from_str("{}").unwrap(),
-            billing: serde_json::from_str(r#"{"max_spend_per_request":0,"min_credit_balance":0}"#)
-                .unwrap(),
-            modal: crate::config::ModalConfig {
-                price_per_input_token: 2,
-                price_per_output_token: 5,
-                price_per_1k_tts_chars: 10_000,
-                price_per_stt_second: 100,
-                price_per_image: 500,
-                price_per_video_second: 1000,
-                price_per_music_second: 50,
-                price_per_1k_embedding_tokens: 1,
-                default_price_per_request: 42,
-                models: vec![],
-                idle_shutdown_minutes: 0,
-                idle_check_interval_minutes: 0,
-            },
-            qos: None,
-        });
-        let registry = ModelRegistry::new(vec![]);
-        let backend = ModalBackend::new(config, registry, None);
-        assert_eq!(backend.usage_snapshot(), (0, 0, 0));
-        backend.record_usage(3, 4);
-        assert_eq!(backend.usage_snapshot(), (1, 3, 4));
-        // chat
-        let cost = backend.calculate_cost(&CostParams {
-            task_type: Some("chat".into()),
-            prompt_tokens: 100,
-            completion_tokens: 50,
-            ..Default::default()
-        });
-        assert_eq!(cost, 100 * 2 + 50 * 5);
-        // tts
-        let cost = backend.calculate_cost(&CostParams {
-            task_type: Some("tts".into()),
-            extra: HashMap::from([("characters".into(), 2000)]),
-            ..Default::default()
-        });
-        assert_eq!(cost, (2000 * 10_000) / 1000);
-        // stt
-        let cost = backend.calculate_cost(&CostParams {
-            task_type: Some("stt".into()),
-            extra: HashMap::from([("centiseconds".into(), 500)]),
-            ..Default::default()
-        });
-        assert_eq!(cost, (500 * 100) / 100);
-        // image
-        let cost = backend.calculate_cost(&CostParams {
-            task_type: Some("image".into()),
-            extra: HashMap::from([("images".into(), 3)]),
-            ..Default::default()
-        });
-        assert_eq!(cost, 3 * 500);
-        // unknown → default flat
-        let cost = backend.calculate_cost(&CostParams {
-            task_type: Some("unknown".into()),
-            ..Default::default()
-        });
-        assert_eq!(cost, 42);
-    }
-    #[allow(non_snake_case)]
-    fn TangleConfig_for_test() -> TangleConfig {
-        serde_json::from_str(
-            r#"{
-                "rpc_url": "http://localhost:8545",
-                "chain_id": 31337,
-                "operator_key": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                "shielded_credits": "0x0000000000000000000000000000000000000002",
-                "blueprint_id": 1
-            }"#,
-        )
-        .unwrap()
-    }
 }

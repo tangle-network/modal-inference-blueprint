@@ -5,7 +5,6 @@
 
 use blueprint_sdk::std::sync::Arc;
 use modal_inference::config::OperatorConfig;
-use modal_inference::idle::IdleManager;
 use modal_inference::proxy::ModelRegistry;
 use modal_inference::server::{build_router, ModalBackend};
 use modal_inference::{AppStateBuilder, BillingClient, NonceStore};
@@ -61,33 +60,14 @@ async fn main() -> anyhow::Result<()> {
 
     let registry = ModelRegistry::new(config.modal.models.clone());
 
-    // Idle manager
-    let idle_mgr = if config.modal.idle_shutdown_minutes > 0 {
-        let mgr = IdleManager::new(
-            config.modal.idle_shutdown_minutes,
-            config.modal.idle_check_interval_minutes,
-        );
-        for m in &config.modal.models {
-            mgr.register_model(&m.name, &m.modal_endpoint).await;
-        }
-        let checker = mgr.clone();
-        tokio::spawn(async move { checker.run_idle_checker().await });
-        tracing::info!(
-            idle_mins = config.modal.idle_shutdown_minutes,
-            "Idle shutdown enabled"
-        );
-        Some(mgr)
-    } else {
-        None
-    };
-
-    let backend = ModalBackend::new(config.clone(), registry, idle_mgr);
+    let backend = ModalBackend::new(config.clone(), registry);
 
     let state = AppStateBuilder::new()
         .billing(billing_client)
         .nonce_store(nonce_store)
         .server_config(Arc::new(config.server.clone()))
         .billing_config(Arc::new(config.billing.clone()))
+        .tangle_config(Arc::new(config.tangle.clone()))
         .operator_address(operator_address)
         .max_concurrent(config.server.max_concurrent_requests)
         .backend(backend)

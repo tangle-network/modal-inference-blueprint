@@ -4595,6 +4595,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -4643,7 +4644,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -5921,6 +5922,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tangle-inference-core",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -7150,7 +7152,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7188,7 +7190,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -7434,6 +7436,8 @@ dependencies = [
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -7441,6 +7445,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls",
  "tokio-util",
  "tower",
  "tower-http 0.6.11",
@@ -7450,6 +7455,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -8567,7 +8573,7 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 [[package]]
 name = "tangle-inference-core"
 version = "0.1.0"
-source = "git+https://github.com/tangle-network/tangle-inference-core?rev=c7e11063a2ba30c662c64356a73bd81d4a03a267#c7e11063a2ba30c662c64356a73bd81d4a03a267"
+source = "git+https://github.com/tangle-network/tangle-inference-core?rev=650cf4285b23546cbaf2e38d38d74231825dbfe6#650cf4285b23546cbaf2e38d38d74231825dbfe6"
 dependencies = [
  "alloy",
  "anyhow",
@@ -8575,6 +8581,7 @@ dependencies = [
  "axum 0.7.9",
  "hex",
  "k256",
+ "libc",
  "prometheus 0.13.4",
  "reqwest 0.12.28",
  "serde",

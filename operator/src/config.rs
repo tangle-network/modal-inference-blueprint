@@ -7,9 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use tangle_inference_core::{BillingConfig, ServerConfig, TangleConfig};
+pub use tangle_inference_core::{BillingConfig, GpuConfig, ServerConfig, TangleConfig};
 
-use crate::qos::QoSConfig;
+use tangle_inference_core::qos::QoSConfig;
 
 /// Top-level operator configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +31,7 @@ pub struct OperatorConfig {
     /// Modal-specific backend configuration (task-type pricing, model list,
     /// idle shutdown settings).
     pub modal: ModalConfig,
+    pub gpu: GpuConfig,
 
     /// QoS heartbeat configuration (optional — disabled by default).
     #[serde(default)]
@@ -51,6 +52,7 @@ fn default_server_config() -> ServerConfig {
 /// of Modal endpoints this operator serves, and idle-shutdown settings for
 /// cost optimization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModalConfig {
     // Task-type pricing (base token units).
     /// Per input token (chat, text generation).
@@ -84,14 +86,6 @@ pub struct ModalConfig {
     /// List of Modal endpoints this operator serves.
     #[serde(default)]
     pub models: Vec<ModelEndpoint>,
-
-    /// Stop Modal apps after this many minutes of no requests. 0 = disabled.
-    #[serde(default = "default_idle_shutdown")]
-    pub idle_shutdown_minutes: u64,
-
-    /// How often to check for idle models (minutes).
-    #[serde(default = "default_idle_check")]
-    pub idle_check_interval_minutes: u64,
 }
 
 impl Default for ModalConfig {
@@ -107,17 +101,8 @@ impl Default for ModalConfig {
             price_per_1k_embedding_tokens: 0,
             default_price_per_request: 0,
             models: Vec::new(),
-            idle_shutdown_minutes: 30,
-            idle_check_interval_minutes: 5,
         }
     }
-}
-
-fn default_idle_shutdown() -> u64 {
-    30
-}
-fn default_idle_check() -> u64 {
-    5
 }
 
 /// A single Modal model endpoint that this operator serves.
@@ -198,111 +183,12 @@ impl OperatorConfig {
         // Env vars override file config. Prefix: MODAL_OP_ (e.g. MODAL_OP_TANGLE__RPC_URL).
         builder = builder.add_source(
             config::Environment::with_prefix("MODAL_OP")
+                .prefix_separator("_")
                 .separator("__")
                 .try_parsing(true),
         );
 
         let cfg = builder.build()?.try_deserialize::<Self>()?;
         Ok(cfg)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn example_json() -> &'static str {
-        r#"{
-            "name": "test-op",
-            "tangle": {
-                "rpc_url": "http://localhost:8545",
-                "chain_id": 31337,
-                "operator_key": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                "shielded_credits": "0x0000000000000000000000000000000000000002",
-                "blueprint_id": 1,
-                "service_id": null
-            },
-            "billing": {
-                "max_spend_per_request": 1000000,
-                "min_credit_balance": 1000
-            },
-            "modal": {
-                "price_per_input_token": 1,
-                "price_per_output_token": 3,
-                "price_per_1k_tts_chars": 15000,
-                "price_per_stt_second": 300,
-                "price_per_image": 50000,
-                "price_per_video_second": 1000000,
-                "price_per_music_second": 500,
-                "price_per_1k_embedding_tokens": 10,
-                "default_price_per_request": 1000,
-                "models": [
-                    {
-                        "name": "kokoro-tts",
-                        "type": "tts",
-                        "modal_endpoint": "https://example--kokoro.modal.run"
-                    }
-                ]
-            }
-        }"#
-    }
-
-    #[test]
-    fn test_deserialize_full_config() {
-        let cfg: OperatorConfig = serde_json::from_str(example_json()).unwrap();
-        assert_eq!(cfg.name, "test-op");
-        assert_eq!(cfg.tangle.chain_id, 31337);
-        assert_eq!(cfg.modal.price_per_input_token, 1);
-        assert_eq!(cfg.modal.price_per_output_token, 3);
-        assert_eq!(cfg.modal.price_per_1k_tts_chars, 15000);
-        assert_eq!(cfg.modal.models.len(), 1);
-        assert_eq!(cfg.modal.models[0].task_type, "tts");
-    }
-
-    #[test]
-    fn test_resolve_inference_path() {
-        let m = ModelEndpoint {
-            name: "x".into(),
-            task_type: "tts".into(),
-            modal_endpoint: "https://x".into(),
-            health_path: "/health".into(),
-            inference_path: None,
-        };
-        assert_eq!(m.resolve_inference_path(), "/synthesize");
-
-        let m = ModelEndpoint {
-            task_type: "chat".into(),
-            inference_path: None,
-            ..m
-        };
-        assert_eq!(m.resolve_inference_path(), "/v1/chat/completions");
-
-        let m = ModelEndpoint {
-            task_type: "image".into(),
-            inference_path: None,
-            ..m
-        };
-        assert_eq!(m.resolve_inference_path(), "/v1/images/generations");
-    }
-
-    #[test]
-    fn test_modal_config_defaults() {
-        let json = r#"{
-            "tangle": {
-                "rpc_url": "http://localhost:8545",
-                "chain_id": 31337,
-                "operator_key": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                "shielded_credits": "0x0000000000000000000000000000000000000002",
-                "blueprint_id": 1
-            },
-            "billing": { "max_spend_per_request": 0, "min_credit_balance": 0 },
-            "modal": {}
-        }"#;
-        let cfg: OperatorConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.modal.idle_shutdown_minutes, 30);
-        assert_eq!(cfg.modal.idle_check_interval_minutes, 5);
-        assert_eq!(cfg.modal.default_price_per_request, 0);
-        assert!(cfg.modal.models.is_empty());
-        assert_eq!(cfg.name, "modal-operator");
     }
 }

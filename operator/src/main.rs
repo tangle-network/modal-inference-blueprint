@@ -1,80 +1,40 @@
-//! Binary entrypoint — BlueprintRunner + Tangle integration.
-//!
-//! Starts the operator with:
-//! 1. Config (Modal endpoints, pricing)
-//! 2. Tangle integration (job router, producer/consumer)
-//! 3. HTTP server background service (proxy to Modal)
-
-use blueprint_sdk::contexts::tangle::TangleClientContext;
-use blueprint_sdk::runner::config::BlueprintEnvironment;
-use blueprint_sdk::runner::tangle::config::TangleConfig;
-use blueprint_sdk::runner::BlueprintRunner;
-use blueprint_sdk::tangle::{TangleConsumer, TangleProducer};
-
-use modal_inference::config::OperatorConfig;
-use modal_inference::ModalInferenceServer;
-
-fn setup_log() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt().with_env_filter(filter).init();
-}
-
-#[tokio::main]
-#[allow(clippy::result_large_err)]
-async fn main() -> Result<(), blueprint_sdk::Error> {
-    setup_log();
-    dotenvy::dotenv().ok();
-
-    tracing::info!("Modal Inference Blueprint starting...");
-
-    let config = OperatorConfig::load(None)
-        .map_err(|e| blueprint_sdk::Error::Other(format!("config: {e}")))?;
-
-    tracing::info!(
-        name = %config.name,
-        models = config.modal.models.len(),
-        "Config loaded"
+use alloy_sol_types::SolValue;
+use modal_inference::{config::OperatorConfig, ModalInferenceServer};
+fn registration_payload(config: &OperatorConfig) -> Vec<u8> {
+    assert!(
+        config.gpu.expected_gpu_count > 0 && config.gpu.min_vram_mib > 0,
+        "set remote GPU facts from the SDK lease receipt"
     );
-
-    for model in &config.modal.models {
-        tracing::info!(
-            name = %model.name,
-            task = %model.task_type,
-            endpoint = %model.modal_endpoint,
-            "Model configured"
-        );
-    }
-
-    // Tangle environment
-    let env = BlueprintEnvironment::load()?;
-    let tangle_client = env
-        .tangle_client()
-        .await
-        .map_err(|e| blueprint_sdk::Error::Other(e.to_string()))?;
-
-    let service_id = env
-        .protocol_settings
-        .tangle()
-        .map_err(|e| blueprint_sdk::Error::Other(e.to_string()))?
-        .service_id
-        .ok_or_else(|| blueprint_sdk::Error::Other("No service_id".to_string()))?;
-
-    let tangle_producer = TangleProducer::new(tangle_client.clone(), service_id);
-    let tangle_consumer = TangleConsumer::new(tangle_client);
-
-    // HTTP server background service
-    let server = ModalInferenceServer::new(config);
-
-    tracing::info!("Starting BlueprintRunner...");
-
-    BlueprintRunner::builder(TangleConfig::default(), env)
-        .router(modal_inference::router())
-        .producer(tangle_producer)
-        .consumer(tangle_consumer)
-        .background_service(server)
-        .run()
-        .await?;
-
-    Ok(())
+    let models: Vec<String> = config
+        .modal
+        .models
+        .iter()
+        .map(|model| model.name.clone())
+        .collect();
+    let tasks: Vec<String> = config
+        .modal
+        .models
+        .iter()
+        .map(|model| model.task_type.clone())
+        .collect();
+    (
+        models,
+        tasks,
+        config.gpu.expected_gpu_count,
+        config.gpu.min_vram_mib,
+        config
+            .gpu
+            .gpu_model
+            .clone()
+            .expect("GPU catalog class required"),
+        format!("http://{}:{}", config.server.host, config.server.port),
+    )
+        .abi_encode()
 }
+tangle_inference_core::run_operator!(
+    OperatorConfig::load(None),
+    registration_payload,
+    modal_inference::router(),
+    |config| ModalInferenceServer { config },
+    qos
+);

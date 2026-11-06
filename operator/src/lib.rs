@@ -1,21 +1,6 @@
-//! modal-inference-blueprint — Tangle Blueprint for serving multi-modal AI via Modal.
-//!
-//! Operators deploy Modal apps (any of the 100+ voice/video/image/LLM model
-//! scripts), then run this blueprint which provides:
-//! - Tangle registration + heartbeat
-//! - OpenAI-compatible HTTP proxy to Modal
-//! - Prometheus metrics + on-chain metric submission
-//! - Billing via x402 / ShieldedCredits with per-task-type pricing
-//!
-//! All shared operator infrastructure (billing, metrics, health, nonce store,
-//! spend-auth validation, x402 payment headers, AppState builder) lives in
-//! `tangle-inference-core`. This crate only contains the modal-specific
-//! backend (HTTP proxy, model registry, idle manager, task-aware cost model).
-
 pub mod config;
-pub mod idle;
 pub mod proxy;
-pub mod qos;
+pub use tangle_inference_core::qos;
 pub mod server;
 
 // Re-export shared infrastructure so downstream crates can
@@ -42,7 +27,6 @@ use blueprint_sdk::Job;
 use tokio::sync::oneshot;
 
 use crate::config::OperatorConfig;
-use crate::idle::IdleManager;
 use crate::proxy::ModelRegistry;
 use crate::server::ModalBackend;
 
@@ -116,26 +100,6 @@ impl BackgroundService for ModalInferenceServer {
         tokio::spawn(async move {
             let registry = ModelRegistry::new(config.modal.models.clone());
 
-            let idle_mgr = if config.modal.idle_shutdown_minutes > 0 {
-                let mgr = IdleManager::new(
-                    config.modal.idle_shutdown_minutes,
-                    config.modal.idle_check_interval_minutes,
-                );
-                for m in &config.modal.models {
-                    mgr.register_model(&m.name, &m.modal_endpoint).await;
-                }
-                let checker = mgr.clone();
-                tokio::spawn(async move { checker.run_idle_checker().await });
-                tracing::info!(
-                    idle_mins = config.modal.idle_shutdown_minutes,
-                    check_mins = config.modal.idle_check_interval_minutes,
-                    "Idle shutdown enabled"
-                );
-                Some(mgr)
-            } else {
-                None
-            };
-
             let billing_client = match BillingClient::new(&config.tangle, &config.billing) {
                 Ok(b) => Arc::new(b),
                 Err(e) => {
@@ -147,7 +111,7 @@ impl BackgroundService for ModalInferenceServer {
 
             let operator_address = billing_client.operator_address();
             let nonce_store = Arc::new(NonceStore::load(config.billing.nonce_store_path.clone()));
-            let backend = ModalBackend::new(config.clone(), registry, idle_mgr);
+            let backend = ModalBackend::new(config.clone(), registry);
 
             let state = match AppStateBuilder::new()
                 .billing(billing_client)

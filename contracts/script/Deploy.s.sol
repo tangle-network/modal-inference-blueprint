@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
-
-import "forge-std/Script.sol";
-import "../src/InferenceBSM.sol";
-
-contract DeployInferenceBSM is Script {
-    function run() external {
-        address tsUSD = vm.envAddress("TSUSD_ADDRESS");
-        address admin = vm.envAddress("ADMIN_ADDRESS");
-
-        vm.startBroadcast();
-        InferenceBSM bsm = new InferenceBSM(tsUSD, admin);
-        vm.stopBroadcast();
-
-        console.log("InferenceBSM deployed at:", address(bsm));
-        console.log("  tsUSD:", tsUSD);
-        console.log("  admin:", admin);
+import {RegisterBlueprint} from "tangle-inference-core/script/RegisterBlueprint.s.sol";
+import {InferenceBSM} from "../src/InferenceBSM.sol";
+contract DeployInference is RegisterBlueprint {
+    function _deployManager() internal override returns(address) {
+        address admin = vm.envOr("ADMIN_ADDRESS",vm.addr(vm.envUint("PRIVATE_KEY")));
+        return address(new InferenceBSM(vm.envAddress("PAYMENT_TOKEN"),admin));
+    }
+    function _guardNetwork(address registry) internal view override {
+        require(registry != 0xff137B9C879c47C28ce389e84501925438AB4cdA, "Tempo: use DeployTempo.s.sol");
     }
 }
