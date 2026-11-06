@@ -5913,6 +5913,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "axum 0.7.9",
+ "blueprint-anvil-testing-utils",
  "blueprint-sdk",
  "bytes",
  "config",

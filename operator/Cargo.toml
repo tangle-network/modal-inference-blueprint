@@ -54,3 +54,5 @@ blueprint-sdk = { git = "https://github.com/tangle-network/blueprint", rev = "54
 wiremock = "0.6"
 
 tempfile = "3"
+
+blueprint-anvil-testing-utils = { git = "https://github.com/tangle-network/blueprint", rev = "54f06f2e8cc697435c862f9e24fcefe45aab3324" }

@@ -61,11 +61,6 @@ pub fn router() -> Router {
     )
 }
 
-/// Generic inference job handler.
-///
-/// On-chain jobs exist as a billing-verification path; the real traffic flows
-/// through the OpenAI-compatible HTTP proxy. This handler echoes metadata so
-/// the blueprint is valid on Tangle and can receive on-chain job calls.
 #[debug_job]
 pub async fn run_inference(
     TangleArg(req): TangleArg<InferenceRequest>,
@@ -82,14 +77,6 @@ pub async fn run_inference(
 /// Axum HTTP proxy for Modal.
 pub struct ModalInferenceServer {
     pub config: Arc<OperatorConfig>,
-}
-
-impl ModalInferenceServer {
-    pub fn new(config: OperatorConfig) -> Self {
-        Self {
-            config: Arc::new(config),
-        }
-    }
 }
 
 impl BackgroundService for ModalInferenceServer {
