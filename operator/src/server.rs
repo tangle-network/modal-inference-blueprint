@@ -29,7 +29,7 @@ use tangle_inference_core::{
 use tokio::task::JoinHandle;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
-/// Backend state for the Modal proxy. Holds the model registry, idle manager,
+/// Backend state for the Modal proxy. Holds the model registry,
 /// pre-built task-type cost model, and a reference to the full operator config
 /// (for modal-specific knobs only — all shared knobs live on `AppState`).
 pub struct ModalBackend {

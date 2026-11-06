@@ -28,8 +28,7 @@ pub struct OperatorConfig {
     /// Billing / ShieldedCredits configuration (shared).
     pub billing: BillingConfig,
 
-    /// Modal-specific backend configuration (task-type pricing, model list,
-    /// idle shutdown settings).
+    /// Task pricing and provider-allocated model endpoints.
     pub modal: ModalConfig,
     pub gpu: GpuConfig,
 
@@ -46,12 +45,8 @@ fn default_server_config() -> ServerConfig {
     serde_json::from_str("{}").expect("ServerConfig defaults are valid")
 }
 
-/// Modal backend configuration — the only section that's truly modal-specific.
-///
-/// Holds per-task-type pricing (dispatched via `TaskTypeCostModel`), the list
-/// of Modal endpoints this operator serves, and idle-shutdown settings for
-/// cost optimization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Task pricing and endpoints returned by the SDK remote provider.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModalConfig {
     // Task-type pricing (base token units).
@@ -86,23 +81,6 @@ pub struct ModalConfig {
     /// List of Modal endpoints this operator serves.
     #[serde(default)]
     pub models: Vec<ModelEndpoint>,
-}
-
-impl Default for ModalConfig {
-    fn default() -> Self {
-        Self {
-            price_per_input_token: 0,
-            price_per_output_token: 0,
-            price_per_1k_tts_chars: 0,
-            price_per_stt_second: 0,
-            price_per_image: 0,
-            price_per_video_second: 0,
-            price_per_music_second: 0,
-            price_per_1k_embedding_tokens: 0,
-            default_price_per_request: 0,
-            models: Vec::new(),
-        }
-    }
 }
 
 /// A single Modal model endpoint that this operator serves.
