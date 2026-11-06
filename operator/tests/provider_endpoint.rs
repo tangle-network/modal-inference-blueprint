@@ -43,12 +43,12 @@ async fn example_config_boots_cli_and_serves_provider_endpoint() {
             .current_dir(temporary.path())
             .env(
                 key_variable,
-                "0000000000000000000000000000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
             )
             .env("RUST_LOG", "error")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
             .unwrap();

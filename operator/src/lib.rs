@@ -68,76 +68,71 @@ pub fn router_with_config(config: Arc<OperatorConfig>) -> Router {
 pub async fn run_inference(
     Context(registry): Context<Arc<ModelRegistry>>,
     TangleArg(req): TangleArg<InferenceRequest>,
-) -> Result<TangleResult<InferenceResult>, RunnerError> {
-    let execute = async {
-        let model = registry
-            .get(&req.model)
-            .ok_or_else(|| anyhow::anyhow!("model not configured"))?;
-        let mut input_units = 0;
-        let (body, content_type) = match req.inputType.as_str() {
-            "audio" | "audio/wav" => (bytes::Bytes::from(req.inputData.to_vec()), "audio/wav"),
-            "json" | "application/json" => {
-                serde_json::from_slice::<serde_json::Value>(&req.inputData)?;
-                (
-                    bytes::Bytes::from(req.inputData.to_vec()),
-                    "application/json",
-                )
-            }
-            "text" => {
-                let text = std::str::from_utf8(&req.inputData)?;
-                let value = if let Some(value) = serde_json::from_str::<serde_json::Value>(text)
-                    .ok()
-                    .filter(serde_json::Value::is_object)
-                {
-                    value
-                } else {
-                    match model.task_type.as_str() {
-                        "tts" => {
-                            input_units = u32::try_from(text.chars().count())?;
-                            serde_json::json!({"text":text,"voice_id":"default","format":"wav"})
-                        }
-                        "chat" | "text" | "text-generation" => {
-                            serde_json::json!({"model":req.model,
-                        "messages":[{"role":"user","content":text}],"stream":false})
-                        }
-                        "embedding" => serde_json::json!({"model":req.model,"input":text}),
-                        _ => serde_json::json!({"prompt":text}),
+) -> anyhow::Result<TangleResult<InferenceResult>> {
+    let model = registry
+        .get(&req.model)
+        .ok_or_else(|| anyhow::anyhow!("model not configured"))?;
+    let mut input_units = 0;
+    let (body, content_type) = match req.inputType.as_str() {
+        "audio" | "audio/wav" => (bytes::Bytes::from(req.inputData.to_vec()), "audio/wav"),
+        "json" | "application/json" => {
+            serde_json::from_slice::<serde_json::Value>(&req.inputData)?;
+            (
+                bytes::Bytes::from(req.inputData.to_vec()),
+                "application/json",
+            )
+        }
+        "text" => {
+            let text = std::str::from_utf8(&req.inputData)?;
+            let value = if let Some(value) = serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .filter(serde_json::Value::is_object)
+            {
+                value
+            } else {
+                match model.task_type.as_str() {
+                    "tts" => {
+                        input_units = u32::try_from(text.chars().count())?;
+                        serde_json::json!({"text":text,"voice_id":"default","format":"wav"})
                     }
-                };
-                (
-                    bytes::Bytes::from(serde_json::to_vec(&value)?),
-                    "application/json",
-                )
-            }
-            _ => anyhow::bail!("unsupported inputType; use text, json or audio"),
-        };
-        let output = registry
-            .proxy_request(&req.model, None, body, content_type)
-            .await?;
-        anyhow::ensure!(
-            !output.data.is_empty(),
-            "provider returned an empty inference result"
-        );
-        let units = serde_json::from_slice::<serde_json::Value>(&output.data)
-            .ok()
-            .and_then(|value| {
-                value["usage"]["total_tokens"]
-                    .as_u64()
-                    .or(value["units_consumed"].as_u64())
-            })
-            .map(u32::try_from)
-            .transpose()?
-            .unwrap_or(input_units);
-        Ok::<_, anyhow::Error>(TangleResult(InferenceResult {
-            outputData: output.data.to_vec().into(),
-            unitsConsumed: units,
-            outputType: req.outputType,
-            latencyMs: u32::try_from(output.latency_ms)?,
-        }))
+                    "chat" | "text" | "text-generation" => {
+                        serde_json::json!({"model":req.model,
+                        "messages":[{"role":"user","content":text}],"stream":false})
+                    }
+                    "embedding" => serde_json::json!({"model":req.model,"input":text}),
+                    _ => serde_json::json!({"prompt":text}),
+                }
+            };
+            (
+                bytes::Bytes::from(serde_json::to_vec(&value)?),
+                "application/json",
+            )
+        }
+        _ => anyhow::bail!("unsupported inputType; use text, json or audio"),
     };
-    execute
-        .await
-        .map_err(|error| RunnerError::Other(error.to_string().into()))
+    let output = registry
+        .proxy_request(&req.model, None, body, content_type)
+        .await?;
+    anyhow::ensure!(
+        !output.data.is_empty(),
+        "provider returned an empty inference result"
+    );
+    let units = serde_json::from_slice::<serde_json::Value>(&output.data)
+        .ok()
+        .and_then(|value| {
+            value["usage"]["total_tokens"]
+                .as_u64()
+                .or(value["units_consumed"].as_u64())
+        })
+        .map(u32::try_from)
+        .transpose()?
+        .unwrap_or(input_units);
+    Ok(TangleResult(InferenceResult {
+        outputData: output.data.to_vec().into(),
+        unitsConsumed: units,
+        outputType: req.outputType,
+        latencyMs: u32::try_from(output.latency_ms)?,
+    }))
 }
 
 /// BackgroundService wrapper that builds the AppState and launches the
