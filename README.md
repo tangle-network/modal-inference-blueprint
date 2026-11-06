@@ -8,4 +8,6 @@ Run `cargo run --bin standalone` for HTTP serving or `cargo run --bin modal-oper
 
 The SDK lane owns the Modal adapter. Until that adapter is released, allocation through Modal remains unavailable; an existing provider-allocated endpoint can still be served. There is no fallback rental path in this repository. Model-family serving images and flags are owned by the core recipe catalog.
 
-`cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cd contracts && forge test` are the repository gates, run through `beelink-gate`. Releases use `.github/workflows/release.yml`.
+`deploy/register-blueprint.sh` reads the latest release's prepared definition through core and selects the existing Tempo deployment on chain 42431. `BLUEPRINT_DEFINITION` selects an explicit prepared definition; `BLUEPRINT_BINARY` permits a real local ELF only on loopback Anvil chain 31337. Releases use `.github/workflows/release.yml` and core's packager to publish the SDK manifest, archive names and actual binary digest before publishing the prepared definition.
+
+`cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cd contracts && forge test` are the repository gates, run through `beelink-gate`.
