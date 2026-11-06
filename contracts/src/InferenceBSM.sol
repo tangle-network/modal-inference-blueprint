@@ -162,7 +162,8 @@ contract InferenceBSM is BlueprintServiceManagerBase {
             PERFORMANCE_SLASH_BPS,
             exposureBps,
             evidence,
-            false
+            false,
+            _slashState.config.disputeWindow
         );
         operators[operator].suspended = true;
         emit OperatorStatusChanged(operator, true, "Performance slash proposed");
