@@ -1,9 +1,10 @@
 {
   "metadata_uri": "https://github.com/tangle-network/modal-inference-blueprint",
   "config": {
-    "membership": "Dynamic",
+    "membership": "dynamic",
     "min_operators": 1,
-    "max_operators": 0
+    "max_operators": 0,
+    "pricing": "event_driven"
   },
   "metadata": {
     "name": "Modal Inference Blueprint",
@@ -20,33 +21,41 @@
     }
   ],
   "supported_memberships": [
-    "Dynamic"
+    "dynamic"
   ],
   "sources": [
     {
-      "kind": "Native",
-      "native": {
-        "fetcher": "Github",
-        "entrypoint": "modal-operator",
-        "github": {
-          "owner": "tangle-network",
-          "repo": "modal-inference-blueprint",
-          "tag": "v0.2.4",
-          "binaries": [
-            {
-              "arch": "amd64",
-              "os": "linux",
-              "name": "modal-operator-x86_64-unknown-linux-gnu.tar.xz",
-              "sha256": "867875a1b74a4e9e43fe5c63bfb141a27dea97eb97d681030708364e6a97ec45"
-            }
-          ]
-        }
-      },
+      "kind": "native",
       "testing": {
         "cargo_package": "modal-inference",
         "cargo_bin": "modal-operator",
         "base_path": "."
-      }
+      },
+      "fetcher": "github",
+      "entrypoint": "./modal-operator",
+      "github": {
+        "owner": "tangle-network",
+        "repo": "modal-inference-blueprint",
+        "tag": "v0.2.4",
+        "binaries": [
+          {
+            "arch": "amd64",
+            "os": "linux",
+            "name": "modal-operator",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      },
+      "binaries": [
+        {
+          "arch": "amd64",
+          "os": "linux",
+          "name": "modal-operator",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
     }
-  ]
+  ],
+  "manager": "0x0000000000000000000000000000000000000000",
+  "metadata_file": "definition.json"
 }

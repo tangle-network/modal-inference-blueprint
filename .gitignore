@@ -3,3 +3,4 @@ target/
 *.swo
 .env
 .env.local
+/contracts/dependencies/tnt-core-*/

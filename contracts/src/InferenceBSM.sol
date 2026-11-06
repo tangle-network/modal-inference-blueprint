@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
-import {InferenceBSMBase} from "tangle-inference-core/InferenceBSMBase.sol";
-import { SlashingLib } from "tnt-core/libraries/SlashingLib.sol";
-import { EnumerableSet } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {BlueprintServiceManagerBase} from "tnt-core/BlueprintServiceManagerBase.sol";
+import {SlashingLib} from "tnt-core/libraries/SlashingLib.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+
 /// @notice Multi-modal inference manager. Performance slashing is admin-toggleable.
-contract InferenceBSM is InferenceBSMBase {
+contract InferenceBSM is BlueprintServiceManagerBase {
     using EnumerableSet for EnumerableSet.AddressSet;
     error OperatorNotRegistered(address operator);
     error ModelNotEnabled(string model);
@@ -30,6 +31,7 @@ contract InferenceBSM is InferenceBSMBase {
         PerImage, // Image generation
         PerJob // Fixed-cost tasks (stitch, enhance, etc.)
     }
+
     struct OperatorInfo {
         string[] models;
         string[] taskTypes;
@@ -45,6 +47,7 @@ contract InferenceBSM is InferenceBSMBase {
         uint64 requestsError;
         uint64 lastMetricsBlock;
     }
+
     struct ModelConfig {
         string taskType;
         PricingUnit pricingUnit;
@@ -74,26 +77,31 @@ contract InferenceBSM is InferenceBSMBase {
         }
         _;
     }
+
     constructor(address _tsUSD, address _admin, address registry) {
-        _bindRegistrationCore(registry);
+        _initializeBlueprintManager(registry, msg.sender);
         tsUSD = _tsUSD;
         admin = _admin;
         slashingEnabled = false;
         SlashingLib.initializeConfig(_slashState);
         SlashingLib.updateConfig(_slashState, 1 days, false, 1000, 7 days, 0, 16);
     }
+
     function setSlashingEnabled(bool enabled) external onlyAdmin {
         slashingEnabled = enabled;
         emit SlashingToggled(enabled);
     }
+
     function setAdmin(address newAdmin) external onlyBlueprintOwner {
         admin = newAdmin;
         emit AdminSet(newAdmin);
     }
+
     function setPermittedCaller(address caller, bool permitted) external onlyAdmin {
         permittedCallers[caller] = permitted;
         emit PermittedCallerSet(caller, permitted);
     }
+
     /// @notice Configure a model with explicit pricing unit type.
     function configureModel(
         string calldata model,
@@ -101,32 +109,29 @@ contract InferenceBSM is InferenceBSMBase {
         PricingUnit pricingUnit,
         uint64 pricePerUnit,
         uint32 minGpuVramMib
-    )
-        external
-        onlyAdmin
-    {
+    ) external onlyAdmin {
         bytes32 key = keccak256(bytes(model));
         modelConfigs[key] = ModelConfig(taskType, pricingUnit, pricePerUnit, minGpuVramMib, true);
         emit ModelConfigured(model, taskType, pricingUnit, pricePerUnit, minGpuVramMib);
     }
+
     function disableModel(string calldata model) external onlyAdmin {
         modelConfigs[keccak256(bytes(model))].enabled = false;
     }
+
     function setOperatorSuspended(address operator, bool suspended, string calldata reason) external onlyAdmin {
         if (!operators[operator].active) revert OperatorNotRegistered(operator);
         operators[operator].suspended = suspended;
         emit OperatorStatusChanged(operator, suspended, reason);
     }
+
     function submitMetrics(
         address operator,
         uint256 uptimeBps,
         uint256 avgLatencyMs,
         uint64 requestsTotal,
         uint64 requestsError
-    )
-        external
-        onlyPermittedOrOperator(operator)
-    {
+    ) external onlyPermittedOrOperator(operator) {
         OperatorInfo storage op = operators[operator];
         if (!op.active) revert OperatorNotRegistered(operator);
         op.uptimeBps = uptimeBps;
@@ -140,12 +145,8 @@ contract InferenceBSM is InferenceBSMBase {
             emit OperatorStatusChanged(operator, true, "Auto-suspended: uptime below 90%");
         }
     }
-    function proposePerformanceSlash(
-        uint64 serviceId,
-        address operator,
-        uint16 exposureBps,
-        bytes32 evidence
-    )
+
+    function proposePerformanceSlash(uint64 serviceId, address operator, uint16 exposureBps, bytes32 evidence)
         external
         onlyAdmin
         returns (uint64 slashId)
@@ -166,10 +167,12 @@ contract InferenceBSM is InferenceBSMBase {
         operators[operator].suspended = true;
         emit OperatorStatusChanged(operator, true, "Performance slash proposed");
     }
+
     function executePerformanceSlash(uint64 slashId) external onlyAdmin {
         if (!slashingEnabled) revert SlashingDisabled();
         SlashingLib.markExecuted(_slashProposals, slashId, 0);
     }
+
     /// @notice Dispute a pending slash proposal.
     /// @dev This BSM does not require a dispute bond (config.disputeBond == 0).
     ///      The function is intentionally non-payable so any accidental ETH
@@ -179,6 +182,7 @@ contract InferenceBSM is InferenceBSMBase {
     function disputeSlash(uint64 slashId, string calldata reason) external {
         SlashingLib.disputeSlash(_slashProposals, _slashState.config, slashId, msg.sender, reason, 0);
     }
+
     function cancelSlash(uint64 slashId, string calldata reason) external onlyAdmin {
         SlashingLib.cancelSlash(_slashProposals, slashId, msg.sender, reason);
         address operator = _slashProposals[slashId].operator;
@@ -187,6 +191,7 @@ contract InferenceBSM is InferenceBSMBase {
             emit OperatorStatusChanged(operator, false, "Slash cancelled, reactivated");
         }
     }
+
     function reactivate() external {
         OperatorInfo storage op = operators[msg.sender];
         if (!op.active) revert OperatorNotRegistered(msg.sender);
@@ -194,6 +199,7 @@ contract InferenceBSM is InferenceBSMBase {
         op.suspended = false;
         emit OperatorStatusChanged(msg.sender, false, "Self-reactivated");
     }
+
     function onRegister(address operator, bytes calldata registrationInputs) external payable override onlyFromTangle {
         (
             string[] memory models,
@@ -227,15 +233,14 @@ contract InferenceBSM is InferenceBSMBase {
         permittedCallers[operator] = true;
         emit OperatorRegistered(operator, models, gpuVramMib, endpoint);
     }
+
     function onUnregister(address operator) external override onlyFromTangle {
         operators[operator].active = false;
         _operatorSet.remove(operator);
         permittedCallers[operator] = false;
     }
-    function onUpdatePreferences(
-        address operator,
-        bytes calldata newPreferences
-    )
+
+    function onUpdatePreferences(address operator, bytes calldata newPreferences)
         external
         payable
         override
@@ -243,6 +248,7 @@ contract InferenceBSM is InferenceBSMBase {
     {
         operators[operator].endpoint = abi.decode(newPreferences, (string));
     }
+
     function onUnappliedSlash(uint64, bytes calldata offender, uint8) external override onlyFromTangle {
         address operator = abi.decode(offender, (address));
         if (operators[operator].active) {
@@ -250,19 +256,14 @@ contract InferenceBSM is InferenceBSMBase {
             emit OperatorStatusChanged(operator, true, "Heartbeat slashing (protocol)");
         }
     }
+
     function onSlash(uint64, bytes calldata offender, uint8) external override onlyFromTangle {
         address operator = abi.decode(offender, (address));
         operators[operator].suspended = true;
         emit OperatorStatusChanged(operator, true, "Slashed (protocol)");
     }
-    function onJobResult(
-        uint64,
-        uint8,
-        uint64,
-        address operator,
-        bytes calldata,
-        bytes calldata
-    )
+
+    function onJobResult(uint64, uint8, uint64, address operator, bytes32, bytes calldata)
         external
         payable
         override
@@ -270,39 +271,51 @@ contract InferenceBSM is InferenceBSMBase {
     {
         if (operators[operator].active) operators[operator].requestsTotal++;
     }
+
     function canJoin(uint64, address operator) external view override returns (bool) {
         return operators[operator].active && !operators[operator].suspended;
     }
+
     function getHeartbeatInterval(uint64) external pure override returns (bool, uint64) {
         return (false, 50);
     }
+
     function getHeartbeatThreshold(uint64) external pure override returns (bool, uint8) {
         return (false, 3);
     }
+
     function getSlashingWindow(uint64) external pure override returns (bool, uint64) {
         return (false, 600);
     }
+
     function getExitConfig(uint64) external pure override returns (bool, uint64, uint64, bool) {
         return (false, 86_400, 3600, true);
     }
+
     function getMinOperatorStake() external pure override returns (bool, uint256) {
         return (false, MIN_OPERATOR_STAKE);
     }
+
     function querySlashingOrigin(uint64) external view override returns (address) {
         return address(this);
     }
+
     function queryDisputeOrigin(uint64) external view override returns (address) {
         return admin;
     }
+
     function queryDeveloperPaymentAddress(uint64) external view override returns (address payable) {
         return payable(blueprintOwner);
     }
+
     function queryIsPaymentAssetAllowed(uint64, address asset) external view override returns (bool) {
         return asset == tsUSD || asset == address(0);
     }
+
     function getOperators() external view returns (address[] memory) {
         return _operatorSet.values();
     }
+
     function getActiveOperators() external view returns (address[] memory) {
         address[] memory all = _operatorSet.values();
         uint256 count;
@@ -316,6 +329,7 @@ contract InferenceBSM is InferenceBSMBase {
         }
         return active;
     }
+
     function getOperatorReputation(address operator)
         external
         view
@@ -331,11 +345,13 @@ contract InferenceBSM is InferenceBSMBase {
         OperatorInfo storage op = operators[operator];
         return (op.uptimeBps, op.avgLatencyMs, op.requestsTotal, op.requestsError, op.suspended, op.lastMetricsBlock);
     }
+
     function getModelConfig(string calldata model) external view returns (ModelConfig memory) {
         return modelConfigs[keccak256(bytes(model))];
     }
+
     function getSlashProposal(uint64 slashId) external view returns (SlashingLib.SlashProposal memory) {
         return _slashProposals[slashId];
     }
-    receive() external payable override { }
+    receive() external payable override {}
 }
