@@ -1,10 +1,3 @@
-//! Modal-specific operator configuration.
-//!
-//! Shared infrastructure config (`TangleConfig`, `ServerConfig`, `BillingConfig`)
-//! lives in `tangle-inference-core` and is re-exported here. The `modal` section
-//! carries all task-type pricing and the list of Modal endpoints this operator
-//! serves.
-
 use serde::{Deserialize, Serialize};
 
 pub use tangle_inference_core::{BillingConfig, GpuConfig, ServerConfig, TangleConfig};
@@ -133,13 +126,14 @@ impl OperatorConfig {
             builder = builder.add_source(config::File::with_name("config/operator.toml"));
         }
 
-        // Env vars override file config. Prefix: MODAL_OP_ (e.g. MODAL_OP_TANGLE__RPC_URL).
-        builder = builder.add_source(
-            config::Environment::with_prefix("MODAL_OP")
-                .prefix_separator("_")
-                .separator("__")
-                .try_parsing(true),
-        );
+        for prefix_separator in ["__", "_"] {
+            builder = builder.add_source(
+                config::Environment::with_prefix("MODAL_OP")
+                    .prefix_separator(prefix_separator)
+                    .separator("__")
+                    .try_parsing(true),
+            );
+        }
 
         let cfg = builder.build()?.try_deserialize::<Self>()?;
         Ok(cfg)
