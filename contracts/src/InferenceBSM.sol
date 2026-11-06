@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
-import { BlueprintServiceManagerBase } from "tnt-core/BlueprintServiceManagerBase.sol";
+import {InferenceBSMBase} from "tangle-inference-core/InferenceBSMBase.sol";
 import { SlashingLib } from "tnt-core/libraries/SlashingLib.sol";
 import { EnumerableSet } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 /// @notice Multi-modal inference manager. Performance slashing is admin-toggleable.
-contract InferenceBSM is BlueprintServiceManagerBase {
+contract InferenceBSM is InferenceBSMBase {
     using EnumerableSet for EnumerableSet.AddressSet;
     error OperatorNotRegistered(address operator);
     error ModelNotEnabled(string model);
@@ -22,8 +22,6 @@ contract InferenceBSM is BlueprintServiceManagerBase {
     event SlashingToggled(bool enabled);
     event AdminSet(address indexed admin);
     event PermittedCallerSet(address indexed caller, bool permitted);
-    /// @notice How a model's usage is metered. Each unit type maps to a
-    ///         billing dimension so the gateway can compute cost accurately.
     enum PricingUnit {
         PerMillionTokens, // Text LLMs (input+output combined)
         Per1KCharacters, // TTS, voice cloning
@@ -51,7 +49,7 @@ contract InferenceBSM is BlueprintServiceManagerBase {
     struct ModelConfig {
         string taskType;
         PricingUnit pricingUnit;
-        uint64 pricePerUnit; // in tsUSD base units (6 decimals)
+        uint64 pricePerUnit;
         uint32 minGpuVramMib;
         bool enabled;
     }
@@ -77,18 +75,12 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         }
         _;
     }
-    constructor(address _tsUSD, address _admin) {
+    constructor(address _tsUSD, address _admin, address registry) {
+        _bindRegistrationCore(registry);
         tsUSD = _tsUSD;
         admin = _admin;
         slashingEnabled = false;
         SlashingLib.initializeConfig(_slashState);
-        // BSM-initiated performance slashing config:
-        //   disputeWindow:                 1 day  — operators have 24h to dispute
-        //   instantSlashEnabled:           false  — no emergency-instant path
-        //   maxSlashBps:                   1000   — cap any single slash at 10%
-        //   disputeResolutionDeadline:     7 days — admin has 7 days post-dispute to resolve
-        //   disputeBond:                   0      — no bond required (BSM has no treasury)
-        //   maxPendingSlashesPerOperator:  16     — anti-spam guard
         SlashingLib.updateConfig(_slashState, 1 days, false, 1000, 7 days, 0, 16);
     }
     function setSlashingEnabled(bool enabled) external onlyAdmin {

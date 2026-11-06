@@ -7,7 +7,7 @@ contract InferenceBSMTest is Test {
     address operator = address(0x1111);
     address attacker = address(0x9999);
     function setUp() public {
-        bsm = new InferenceBSM(address(0xbeef),address(this));
+        bsm = new InferenceBSM(address(0xbeef),address(this),address(this));
         bsm.onBlueprintCreated(1,address(this),address(this));
         bsm.configureModel("voice","tts",InferenceBSM.PricingUnit.Per1KCharacters,5000,24000);
     }
@@ -40,4 +40,12 @@ contract InferenceBSMTest is Test {
         bsm.configureModel("voice","tts",InferenceBSM.PricingUnit.Per1KCharacters,0,0);
         assertEq(bsm.getOperators().length,0);
     }
+    function test_foreignFirstBindCannotClaimManager() public {
+        InferenceBSM fresh = new InferenceBSM(address(0xbeef),address(this),address(this));
+        vm.prank(attacker); vm.expectRevert(); fresh.onBlueprintCreated(999,attacker,attacker);
+        fresh.onBlueprintCreated(1,address(this),address(this));
+        assertEq(fresh.blueprintOwner(),address(this));
+        vm.expectRevert(); fresh.onBlueprintCreated(2,attacker,address(this));
+    }
+
 }

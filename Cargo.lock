@@ -4644,7 +4644,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -7152,7 +7152,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7190,7 +7190,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -8573,7 +8573,7 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 [[package]]
 name = "tangle-inference-core"
 version = "0.1.0"
-source = "git+https://github.com/tangle-network/tangle-inference-core?rev=650cf4285b23546cbaf2e38d38d74231825dbfe6#650cf4285b23546cbaf2e38d38d74231825dbfe6"
+source = "git+https://github.com/tangle-network/tangle-inference-core?rev=a5bdd33259f8113c5bca231613862def32d2c76b#a5bdd33259f8113c5bca231613862def32d2c76b"
 dependencies = [
  "alloy",
  "anyhow",

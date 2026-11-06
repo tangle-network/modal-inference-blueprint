@@ -28,7 +28,7 @@ contract DeployTempo is Script {
         require(floor > 0 && floor <= _maxFloor(decimals), "EVENT_RATE out of range for settlement decimals");
         ITangle tangle = ITangle(tangleAddr);
         vm.startBroadcast(deployerKey);
-        InferenceBSM bsm = new InferenceBSM(paymentToken, admin);
+        InferenceBSM bsm = new InferenceBSM(paymentToken, admin, tangleAddr);
         uint64 blueprintId = tangle.createBlueprint(_definition(address(bsm), floor));
         tangle.setBlueprintSettlementAsset(blueprintId, paymentToken);
         uint8[] memory jobs = new uint8[](1);
