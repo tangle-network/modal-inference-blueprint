@@ -210,10 +210,6 @@ fn resolve_model<'a>(
     })
 }
 /// Authorizes the request's payment; None when billing is optional and the caller sent no proof.
-#[expect(
-    clippy::result_large_err,
-    reason = "HTTP handlers return this error response directly without an extra allocation."
-)]
 async fn authorize(
     state: &AppState,
     headers: &HeaderMap,
