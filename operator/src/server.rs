@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tangle_inference_core::server::{
-    billing_gate, error_response, metrics_handler, settle_billing,
+    authorize_request, error_response, metrics_handler, payment_required, resolve_payment_proof,
+    settle_request, AuthorizedPayment,
 };
 use tangle_inference_core::{
     AppState, CostModel, CostParams, FlatRequestCostModel, PerCharCostModel, PerImageCostModel,
@@ -169,11 +170,10 @@ pub async fn start(
     state: AppState,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<JoinHandle<()>> {
-    let backend = state
+    state
         .backend::<ModalBackend>()
         .ok_or_else(|| anyhow::anyhow!("AppState backend is not a ModalBackend"))?;
     let bind = format!("{}:{}", state.server_config.host, state.server_config.port);
-    let _ = backend;
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(bind = %bind, "Modal HTTP server listening");
@@ -209,19 +209,31 @@ fn resolve_model<'a>(
             .next()
     })
 }
-/// Wake the model, proxy its request, and settle the authorized cost.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The private boundary receives both the upstream request and its billing authorization."
-)]
+/// Authorizes the request's payment; None when billing is optional and the caller sent no proof.
+async fn authorize(
+    state: &AppState,
+    headers: &HeaderMap,
+    spend_auth: Option<SpendAuthPayload>,
+    cost: u64,
+) -> Result<Option<AuthorizedPayment>, Response> {
+    let Some(proof) = resolve_payment_proof(headers, spend_auth, None) else {
+        let b = &state.billing_config;
+        let floor = cost.max(b.min_charge_amount);
+        let refuse = || payment_required(b, &state.tangle_config, state.operator_address, floor);
+        return (!b.billing_required).then_some(None).ok_or_else(refuse);
+    };
+    // Probing would wake a scale-to-zero GPU app; the proxy reports upstream errors instead.
+    let ready = std::future::ready(true);
+    authorize_request(state, proof, cost, ready).await.map(Some)
+}
+/// Wake the model, proxy its request, and settle the authorized cost; a failure releases it.
 async fn proxy_and_settle(
     state: &AppState,
     backend: &ModalBackend,
     model_name: &str,
     payload: Bytes,
     content_type: &str,
-    spend_auth: &Option<SpendAuthPayload>,
-    preauth_amount: Option<u64>,
+    payment: Option<AuthorizedPayment>,
     actual_cost: u64,
 ) -> Response {
     match backend
@@ -232,11 +244,8 @@ async fn proxy_and_settle(
         Ok(resp) => {
             let (prompt_tokens, completion_tokens) = usage_from_body(&resp.data);
             backend.record_usage(prompt_tokens, completion_tokens);
-            if let (Some(ref sa), Some(preauth)) = (spend_auth, preauth_amount) {
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, Some(actual_cost)).await
-                {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
+            if let Some(auth) = &payment {
+                settle_request(state, auth, Some(actual_cost)).await;
             }
             (
                 StatusCode::OK,
@@ -376,11 +385,10 @@ async fn synthesize(
         extra: HashMap::from([("characters".into(), chars.max(500))]),
         ..cost_params.clone()
     });
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body.spend_auth, estimated_cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let payment = match authorize(&state, &headers, body.spend_auth, estimated_cost).await {
+        Ok(payment) => payment,
+        Err(resp) => return resp,
+    };
     let payload = serde_json::json!({
         "text": body.input,
         "voice_id": body.voice.as_deref().unwrap_or("default"),
@@ -396,8 +404,7 @@ async fn synthesize(
         &model.name,
         payload_bytes,
         "application/json",
-        &spend_auth,
-        preauth_amount,
+        payment,
         backend.calculate_cost(&cost_params),
     )
     .await
@@ -447,22 +454,18 @@ async fn transcribe(
         extra: HashMap::from([("centiseconds".into(), centiseconds.max(3000))]),
         ..cost_params.clone()
     });
-    let body_spend_auth: Option<SpendAuthPayload> = spend_auth_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok());
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body_spend_auth, estimated_cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let spend_auth = spend_auth_json.and_then(|s| serde_json::from_str(&s).ok());
+    let payment = match authorize(&state, &headers, spend_auth, estimated_cost).await {
+        Ok(payment) => payment,
+        Err(resp) => return resp,
+    };
     proxy_and_settle(
         &state,
         backend,
         &model.name,
         audio,
         "audio/wav",
-        &spend_auth,
-        preauth_amount,
+        payment,
         backend.calculate_cost(&cost_params),
     )
     .await
@@ -493,11 +496,10 @@ async fn chat_completions(
         completion_tokens: body.max_tokens,
         ..Default::default()
     });
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body.spend_auth, estimated_cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let payment = match authorize(&state, &headers, body.spend_auth, estimated_cost).await {
+        Ok(payment) => payment,
+        Err(resp) => return resp,
+    };
     let payload = serde_json::json!({
         "model": model.name,
         "messages": body.messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
@@ -526,16 +528,14 @@ async fn chat_completions(
                 })
                 .unwrap_or((est_prompt, body.max_tokens));
             backend.record_usage(u64::from(pt), u64::from(ct));
-            if let (Some(ref sa), Some(preauth)) = (&spend_auth, preauth_amount) {
+            if let Some(auth) = &payment {
                 let cost = backend.calculate_cost(&CostParams {
                     task_type: Some("chat".into()),
                     prompt_tokens: pt,
                     completion_tokens: ct,
                     ..Default::default()
                 });
-                if let Err(e) = settle_billing(&state.billing, sa, preauth, Some(cost)).await {
-                    tracing::error!(error = %e, "on-chain settlement failed — manual recovery required");
-                }
+                settle_request(&state, auth, Some(cost)).await;
             }
             (
                 StatusCode::OK,
@@ -572,11 +572,10 @@ async fn images_generations(
         extra: HashMap::from([("images".into(), body.n.max(1) as u64)]),
         ..Default::default()
     });
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body.spend_auth, cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let payment = match authorize(&state, &headers, body.spend_auth, cost).await {
+        Ok(payment) => payment,
+        Err(resp) => return resp,
+    };
     let payload = serde_json::json!({"model": model.name, "prompt": body.prompt, "n": body.n});
     let payload_bytes = match json_payload(&payload) {
         Ok(b) => b,
@@ -588,8 +587,7 @@ async fn images_generations(
         &model.name,
         payload_bytes,
         "application/json",
-        &spend_auth,
-        preauth_amount,
+        payment,
         cost,
     )
     .await
@@ -614,11 +612,10 @@ async fn videos_generations(
         extra: HashMap::from([("centiseconds".into(), (body.duration_seconds as u64) * 100)]),
         ..Default::default()
     });
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body.spend_auth, cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let payment = match authorize(&state, &headers, body.spend_auth, cost).await {
+        Ok(payment) => payment,
+        Err(resp) => return resp,
+    };
     let payload = serde_json::json!({"model": model.name, "prompt": body.prompt, "duration_seconds": body.duration_seconds});
     let payload_bytes = match json_payload(&payload) {
         Ok(b) => b,
@@ -630,8 +627,7 @@ async fn videos_generations(
         &model.name,
         payload_bytes,
         "application/json",
-        &spend_auth,
-        preauth_amount,
+        payment,
         cost,
     )
     .await
@@ -664,11 +660,10 @@ async fn embeddings(
         prompt_tokens: (approx_chars / 4).max(1) as u32,
         ..Default::default()
     });
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, body.spend_auth, cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let payment = match authorize(&state, &headers, body.spend_auth, cost).await {
+        Ok(payment) => payment,
+        Err(resp) => return resp,
+    };
     let payload = serde_json::json!({"model": model.name, "input": body.input});
     let payload_bytes = match json_payload(&payload) {
         Ok(b) => b,
@@ -680,8 +675,7 @@ async fn embeddings(
         &model.name,
         payload_bytes,
         "application/json",
-        &spend_auth,
-        preauth_amount,
+        payment,
         cost,
     )
     .await
