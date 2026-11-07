@@ -30,7 +30,7 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 
 # Shared inference operator infrastructure (billing, metrics, health, server helpers)
-tangle-inference-core = { git = "https://github.com/tangle-network/tangle-inference-core", rev = "aacaec4387122293ac5f9e3d9477380ee7afd94f", default-features = false, features = ["billing", "http", "metrics"] }
+tangle-inference-core = { git = "https://github.com/tangle-network/tangle-inference-core", rev = "08094744fa982f28402d8b0859379891b6f57e1e", default-features = false, features = ["billing", "http", "metrics"] }
 
 # HTTP server
 axum = { workspace = true }
