@@ -1,6 +1,6 @@
 {
   "name": "Modal Inference Blueprint",
-  "description": "Tangle Blueprint for serving AI models on Modal GPUs across text, voice, image, video, and music workloads.",
+  "description": "HTTP inference adapter for GPU endpoints allocated through blueprint-sdk remote providers.",
   "author": "Tangle Network",
   "category": "AI Inference",
   "image": null,
@@ -10,7 +10,7 @@
   "integrity": null,
   "blueprintUi": {
     "displayName": "Modal Inference",
-    "description": "Operate a Modal-backed inference catalog with task filtering, deployed model health, idle shutdown posture, and request metrics.",
+    "description": "Serve configured model endpoints with task billing and health checks.",
     "requestedSlug": "modal-inference",
     "publisher": {
       "name": "Tangle Network",
@@ -38,14 +38,6 @@
     },
     "overviewCards": [
       {
-        "id": "multi-modal-catalog",
-        "kind": "stat",
-        "title": "Models deployed",
-        "description": "LLMs, TTS, STT, images, video, and music inference endpoints on Modal GPUs.",
-        "value": "116",
-        "tone": "success"
-      },
-      {
         "id": "task-type-pricing",
         "kind": "checklist",
         "title": "Per-task billing",
@@ -58,20 +50,13 @@
           "Music (seconds)"
         ],
         "tone": "info"
-      },
-      {
-        "id": "idle-cost-control",
-        "kind": "callout",
-        "title": "Auto-stop idle models",
-        "description": "Configured shutdown windows prevent GPU burn when no requests arrive; wake on demand.",
-        "tone": "warning"
       }
     ],
     "actions": [
       {
         "id": "deploy-modal-service",
         "label": "Deploy Modal service",
-        "description": "Register a newly deployed Modal app endpoint with task type and configure per-model idle shutdown window.",
+        "description": "Register a model endpoint allocated through blueprint-sdk remote providers.",
         "target": "service",
         "submitLabel": "Register",
         "fields": [
@@ -160,13 +145,6 @@
             "input": "number",
             "required": true,
             "placeholder": "400"
-          },
-          {
-            "key": "idle_shutdown_seconds",
-            "label": "Idle shutdown (sec)",
-            "input": "number",
-            "required": false,
-            "placeholder": "300"
           }
         ]
       }
@@ -206,20 +184,15 @@
         "metricKeys": [
           "requests_total",
           "inference_latency_ms",
-          "active_models",
-          "gpu_seconds_billed",
-          "idle_models_stopped"
+          "active_models"
         ]
       },
       {
         "module": "permissions-matrix",
         "slot": "sidebar",
         "eventKinds": [
-          "model_deployed",
           "endpoint_registered",
-          "spend_auth_validated",
-          "model_woke",
-          "idle_shutdown_triggered"
+          "spend_auth_validated"
         ]
       },
       {

@@ -1,85 +1,59 @@
-# Reusable release workflow for Tangle blueprint operators.
-# Copy this to .github/workflows/release.yml in each blueprint repo and set
-# the `BINARY_NAME` repo variable (or edit the default below).
-#
-# Builds the operator for x86_64-unknown-linux-gnu — the target operators
-# actually run on — NATIVELY on ubuntu (no cross-compilation). Cross builds
-# (musl/arm64/macos) repeatedly broke on aws-lc-sys' GCC memcmp bug inside the
-# `cross` containers; a native gnu build is reliable and is what servers use.
-#
-# Uploads the stripped binary + sha256 as GitHub Release assets (free hosting).
-# The on-chain version is then registered from tnt-core's
-# `publish-blueprint-binary` workflow.
-#
-# Usage: git tag v0.1.0 && git push origin v0.1.0   (or run via workflow_dispatch)
 name: Release
-
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to (re)build a release for (e.g. v0.1.0)'
+        description: Existing tag to release
         required: true
-
 permissions:
   contents: write
-
-env:
-  CARGO_TERM_COLOR: always
-  BINARY_NAME: ${{ vars.BINARY_NAME || 'modal-operator' }}
-  TARGET: x86_64-unknown-linux-gnu
-
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
       - name: System dependencies
-        # protobuf-compiler from apt (ubuntu-latest ships 3.21.x) — avoids the
-        # GitHub-API-backed setup-protoc action. This is the protoc version the
-        # operator builds against locally.
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release binary
-        run: cargo build --release --bin "$BINARY_NAME"
-
-      - name: Package archive + checksum
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config clang cmake
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-dist
         run: |
-          BIN="target/release/${BINARY_NAME}"
-          test -f "$BIN" || { echo "::error::binary not found: $BIN"; exit 1; }
-          strip "$BIN" 2>/dev/null || true
-          ARCHIVE="${BINARY_NAME}-${TARGET}.tar.xz"
-          tar -cJf "$ARCHIVE" -C target/release "$BINARY_NAME"
-          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          echo "Built $(du -h "$ARCHIVE" | cut -f1) archive"
-          cat "${ARCHIVE}.sha256"
-
+          DIST_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["cargo-dist-version"])')
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location "https://github.com/astral-sh/cargo-dist/releases/download/v$DIST_VERSION/cargo-dist-installer.sh" | sh
+      - name: Build native release artifacts
+        run: |
+          cargo fetch --locked
+          CARGO_NET_OFFLINE=true dist build --tag "$TAG" --artifacts=all --output-format=json > "$RUNNER_TEMP/dist-manifest.json"
+          git diff --exit-code -- Cargo.lock
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NOTES="### Operator binary
-
-          | Target | Archive |
-          |--------|---------|
-          | \`${TARGET}\` | \`${ARCHIVE}\` |
-
-          Verify: \`sha256sum -c ${ARCHIVE}.sha256\`
-          Register on-chain via tnt-core \`publish-blueprint-binary\` (tag \`${TAG}\`)."
-          # create the release if missing, then upload assets (idempotent re-runs).
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
-          gh release upload "$TAG" "$ARCHIVE" "${ARCHIVE}.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --draft
+          UPLOAD_FILES=$(jq -er '.upload_files[]' "$RUNNER_TEMP/dist-manifest.json")
+          mapfile -t FILES <<< "$UPLOAD_FILES"
+          FILES+=("$RUNNER_TEMP/dist-manifest.json")
+          ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for file in "${FILES[@]}"; do
+            name=$(basename "$file")
+            if grep -qxF "$name" <<< "$ASSETS"; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$RUNNER_TEMP/prior-release"
+              cmp "$RUNNER_TEMP/prior-release/$name" "$file"
+            fi
+          done
+          gh release upload "$TAG" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

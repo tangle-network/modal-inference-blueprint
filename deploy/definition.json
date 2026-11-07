@@ -1,0 +1,61 @@
+{
+  "metadata_uri": "https://github.com/tangle-network/modal-inference-blueprint",
+  "config": {
+    "membership": "dynamic",
+    "min_operators": 1,
+    "max_operators": 0,
+    "pricing": "event_driven"
+  },
+  "metadata": {
+    "name": "Modal Inference Blueprint",
+    "description": "Tangle Blueprint for serving AI models on Modal GPUs across text, voice, image, video, and music workloads.",
+    "author": "Tangle Network",
+    "code_repository": "https://github.com/tangle-network/modal-inference-blueprint",
+    "website": "https://tangle.tools",
+    "license": "MIT OR Apache-2.0",
+    "profiling_data": "{\"execution_profile\":{\"gpu\":{\"policy\":\"none\",\"min_count\":0,\"min_vram_gb\":0}}}"
+  },
+  "jobs": [
+    {
+      "name": "inference"
+    }
+  ],
+  "supported_memberships": [
+    "dynamic"
+  ],
+  "sources": [
+    {
+      "kind": "native",
+      "testing": {
+        "cargo_package": "modal-inference",
+        "cargo_bin": "modal-operator",
+        "base_path": "."
+      },
+      "fetcher": "github",
+      "entrypoint": "./modal-operator",
+      "github": {
+        "owner": "tangle-network",
+        "repo": "modal-inference-blueprint",
+        "tag": "v0.2.4",
+        "binaries": [
+          {
+            "arch": "amd64",
+            "os": "linux",
+            "name": "modal-operator",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      },
+      "binaries": [
+        {
+          "arch": "amd64",
+          "os": "linux",
+          "name": "modal-operator",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    }
+  ],
+  "manager": "0x0000000000000000000000000000000000000000",
+  "metadata_file": "definition.json"
+}

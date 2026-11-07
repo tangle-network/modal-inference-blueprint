@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
+import {Script, console2} from "forge-std/Script.sol";
+import {InferenceBSM} from "../src/InferenceBSM.sol";
 
-import "forge-std/Script.sol";
-import "../src/InferenceBSM.sol";
-
-contract DeployInferenceBSM is Script {
+contract DeployInference is Script {
     function run() external {
-        address tsUSD = vm.envAddress("TSUSD_ADDRESS");
+        address registry = vm.envAddress("TANGLE_CORE");
+        require(registry.code.length != 0, "TANGLE_CORE has no code");
+        address token = vm.envAddress("PAYMENT_TOKEN");
         address admin = vm.envAddress("ADMIN_ADDRESS");
-
         vm.startBroadcast();
-        InferenceBSM bsm = new InferenceBSM(tsUSD, admin);
+        address manager = address(new InferenceBSM(token, admin, registry));
         vm.stopBroadcast();
-
-        console.log("InferenceBSM deployed at:", address(bsm));
-        console.log("  tsUSD:", tsUSD);
-        console.log("  admin:", admin);
+        console2.log("DEPLOY_INFERENCE_BSM=%s", vm.toString(manager));
     }
 }

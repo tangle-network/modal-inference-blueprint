@@ -1,52 +1,30 @@
-# Modal Inference Blueprint — Operator Configuration
-#
-# Copy to config/operator.toml and customize.
-
-name = "My Inference Operator"
-
-[gateway]
-url = "https://api.gateway.tangle.tools"
-# api_key = "plabs_..."     # Get from the gateway dashboard
-# payout_email = "me@example.com"
-
+# Allocate/retire the backend with blueprint-sdk remote providers.
+# Supply the operator signing key through MODAL_OP_TANGLE__OPERATOR_KEY.
+name = "Modal inference operator"
 [tangle]
-# service_id = 12345
-# blueprint_id = 42
-
-[qos]
-heartbeat_interval_secs = 30
-metrics_interval_secs = 60
-prometheus_port = 9090
-
+rpc_url = "http://127.0.0.1:8545"
+chain_id = 31337
+operator_key = ""
+shielded_credits = "0x0000000000000000000000000000000000000000"
+blueprint_id = 1
 [server]
+host = "127.0.0.1"
 port = 8080
-host = "0.0.0.0"
-max_concurrency = 10
-timeout_secs = 120
-
-[cost]
-idle_shutdown_minutes = 30   # Stop Modal apps after 30min idle (0 = disabled)
-idle_check_interval_minutes = 5
-
-# ──────────────────────────────────────────────────────────
-# Models — add one [[models]] block per Modal deployment.
-# Use `python models/deploy.py gen-config --org your-org` to generate these.
-# ──────────────────────────────────────────────────────────
-
-[[models]]
+[billing]
+billing_required = true
+max_spend_per_request = 1000000
+min_credit_balance = 1000
+[modal]
+price_per_1k_tts_chars = 5000
+[[modal.models]]
 name = "kokoro-tts"
 type = "tts"
-modal_endpoint = "https://your-org--inference-kokoro-tts-inference.modal.run"
-price_per_1k = "0.001"
+modal_endpoint = "https://allocated-endpoint.example.com"
+health_path = "/health"
+inference_path = "/synthesize"
 
-# [[models]]
-# name = "llama-4-maverick"
-# type = "text-generation"
-# modal_endpoint = "https://your-org--inference-llama-4-maverick-serve.modal.run"
-# price_per_1k = "0.0003"
-
-# [[models]]
-# name = "hallo3"
-# type = "video-avatar"
-# modal_endpoint = "https://your-org--inference-hallo3-inference.modal.run"
-# price_per_1k = "40"
+# Set from the SDK lease hardware receipt before chain registration.
+[gpu]
+expected_gpu_count = 0
+min_vram_mib = 0
+gpu_model = ""
