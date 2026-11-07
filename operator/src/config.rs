@@ -136,6 +136,24 @@ impl OperatorConfig {
         }
 
         let cfg = builder.build()?.try_deserialize::<Self>()?;
+        let m = &cfg.modal;
+        for model in m.models.iter().filter(|_| cfg.billing.billing_required) {
+            let price = match crate::server::canonical_task_key(&model.task_type) {
+                Some("chat") => m.price_per_input_token.min(m.price_per_output_token),
+                Some("tts") => m.price_per_1k_tts_chars,
+                Some("stt") => m.price_per_stt_second,
+                Some("image") => m.price_per_image,
+                Some("video") => m.price_per_video_second,
+                Some("music") => m.price_per_music_second,
+                Some("embedding") => m.price_per_1k_embedding_tokens,
+                _ => m.default_price_per_request,
+            };
+            anyhow::ensure!(
+                price > 0,
+                "billing_required needs a nonzero price for model {}",
+                model.name
+            );
+        }
         Ok(cfg)
     }
 }

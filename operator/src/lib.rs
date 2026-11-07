@@ -111,7 +111,7 @@ pub async fn run_inference(
         _ => anyhow::bail!("unsupported inputType; use text, json or audio"),
     };
     let output = registry
-        .proxy_request(&req.model, None, body, content_type)
+        .proxy_request(&req.model, body, content_type)
         .await?;
     anyhow::ensure!(
         !output.data.is_empty(),

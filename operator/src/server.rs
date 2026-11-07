@@ -7,7 +7,7 @@
 use crate::config::{ModelEndpoint, OperatorConfig};
 use crate::proxy::ModelRegistry;
 use axum::{
-    extract::{Json, Multipart, Path, State},
+    extract::{Json, Multipart, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -129,7 +129,7 @@ fn image_cost(price: u64) -> Box<dyn CostModel> {
         price_per_image: price,
     })
 }
-fn canonical_task_key(task_type: &str) -> Option<&'static str> {
+pub(crate) fn canonical_task_key(task_type: &str) -> Option<&'static str> {
     match task_type {
         "tts" | "clone" | "voice-design" => Some("tts"),
         "stt" | "diarize" | "translate" | "langid" | "vad" | "s2s" | "speakerid" => Some("stt"),
@@ -153,10 +153,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/images/generations", post(images_generations))
         .route("/v1/videos/generations", post(videos_generations))
         .route("/v1/embeddings", post(embeddings))
-        .route("/proxy/:model/*path", post(proxy_raw))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler))
         .route("/models", get(list_models))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            tangle_inference_core::server::authenticate_endpoint,
+        ))
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TimeoutLayer::new(Duration::from_secs(120)))
@@ -215,7 +218,6 @@ async fn proxy_and_settle(
     state: &AppState,
     backend: &ModalBackend,
     model_name: &str,
-    path: Option<&str>,
     payload: Bytes,
     content_type: &str,
     spend_auth: &Option<SpendAuthPayload>,
@@ -224,7 +226,7 @@ async fn proxy_and_settle(
 ) -> Response {
     match backend
         .registry
-        .proxy_request(model_name, path, payload, content_type)
+        .proxy_request(model_name, payload, content_type)
         .await
     {
         Ok(resp) => {
@@ -392,7 +394,6 @@ async fn synthesize(
         &state,
         backend,
         &model.name,
-        None,
         payload_bytes,
         "application/json",
         &spend_auth,
@@ -458,7 +459,6 @@ async fn transcribe(
         &state,
         backend,
         &model.name,
-        None,
         audio,
         "audio/wav",
         &spend_auth,
@@ -510,7 +510,7 @@ async fn chat_completions(
     };
     match backend
         .registry
-        .proxy_request(&model.name, None, payload_bytes, "application/json")
+        .proxy_request(&model.name, payload_bytes, "application/json")
         .await
     {
         Ok(resp) => {
@@ -586,7 +586,6 @@ async fn images_generations(
         &state,
         backend,
         &model.name,
-        None,
         payload_bytes,
         "application/json",
         &spend_auth,
@@ -629,7 +628,6 @@ async fn videos_generations(
         &state,
         backend,
         &model.name,
-        None,
         payload_bytes,
         "application/json",
         &spend_auth,
@@ -680,63 +678,11 @@ async fn embeddings(
         &state,
         backend,
         &model.name,
-        None,
         payload_bytes,
         "application/json",
         &spend_auth,
         preauth_amount,
         cost,
-    )
-    .await
-}
-/// POST /proxy/:model/*path — raw proxy to any model endpoint.
-/// SpendAuth via X-Payment-Signature. Task-type drives cost via `TaskTypeCostModel`.
-async fn proxy_raw(
-    State(state): State<AppState>,
-    Path((model, path)): Path<(String, String)>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let backend = backend_from(&state);
-    let task_key = backend
-        .registry
-        .get(&model)
-        .and_then(|m| canonical_task_key(&m.task_type));
-    let settle_cost = backend.calculate_cost(&CostParams {
-        task_type: task_key.map(String::from),
-        extra: HashMap::from([("images".into(), 1)]),
-        ..Default::default()
-    });
-    let estimated_cost = if task_key.is_some() {
-        backend.calculate_cost(&CostParams {
-            task_type: task_key.map(String::from),
-            extra: HashMap::from([
-                ("images".into(), 1),
-                ("centiseconds".into(), 100),
-                ("characters".into(), 500),
-            ]),
-            prompt_tokens: 500,
-            completion_tokens: 500,
-        })
-    } else {
-        settle_cost
-    };
-    let (spend_auth, preauth_amount) =
-        match billing_gate(&state, &headers, None, estimated_cost).await {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
-    let proxy_path = format!("/{path}");
-    proxy_and_settle(
-        &state,
-        backend,
-        &model,
-        Some(&proxy_path),
-        body,
-        "application/json",
-        &spend_auth,
-        preauth_amount,
-        settle_cost,
     )
     .await
 }
@@ -750,35 +696,20 @@ async fn list_models(State(state): State<AppState>) -> Json<serde_json::Value> {
             serde_json::json!({
                 "id": m.name,
                 "type": m.task_type,
-                "endpoint": m.modal_endpoint,
                 "object": "model",
             })
         })
         .collect();
     Json(serde_json::json!({ "object": "list", "data": models }))
 }
+/// Reports operator state without probing upstreams: each probe would wake a scale-to-zero GPU app.
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let backend = backend_from(&state);
-    let model_health = backend.registry.health_check_all().await;
-    let all_ok = model_health.iter().all(|h| h.status == "ok");
-    let models: Vec<serde_json::Value> = model_health
-        .iter()
-        .map(|h| {
-            let model_config = backend.registry.get(&h.name);
-            serde_json::json!({
-                "name": h.name,
-                "status": h.status,
-                "type": model_config.map(|m| m.task_type.as_str()).unwrap_or("unknown"),
-                "latency_ms": h.latency_ms,
-                "modal_endpoint": model_config.map(|m| m.modal_endpoint.as_str()),
-            })
-        })
-        .collect();
     Json(serde_json::json!({
-        "status": if all_ok { "ok" } else { "degraded" },
+        "status": "ok",
         "operator": backend.config.name,
         "billing_required": state.billing_config.billing_required,
-        "models": models,
+        "models": backend.registry.list().iter().map(|m| serde_json::json!({"name": m.name, "type": m.task_type})).collect::<Vec<_>>(),
         "metrics": tangle_inference_core::metrics::health_summary(),
     }))
 }

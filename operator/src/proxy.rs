@@ -61,7 +61,6 @@ impl ModelRegistry {
     pub async fn proxy_request(
         &self,
         model_name: &str,
-        path: Option<&str>,
         body: Bytes,
         content_type: &str,
     ) -> Result<ProxyResponse> {
@@ -69,7 +68,7 @@ impl ModelRegistry {
             .get(model_name)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {model_name}"))?;
 
-        let inference_path = path.unwrap_or_else(|| model.resolve_inference_path());
+        let inference_path = model.resolve_inference_path();
         let url = format!(
             "{}{}",
             model.modal_endpoint.trim_end_matches('/'),
@@ -121,45 +120,10 @@ impl ModelRegistry {
             latency_ms,
         })
     }
-
-    /// Health check all models.
-    pub async fn health_check_all(&self) -> Vec<ModelHealth> {
-        let mut results = Vec::new();
-        for (name, model) in &self.models {
-            let url = format!(
-                "{}{}",
-                model.modal_endpoint.trim_end_matches('/'),
-                model.health_path
-            );
-            let start = Instant::now();
-            let status = match self.client.get(&url).send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        "ok"
-                    } else {
-                        "error"
-                    }
-                }
-                Err(_) => "unreachable",
-            };
-            results.push(ModelHealth {
-                name: name.clone(),
-                status: status.to_string(),
-                latency_ms: start.elapsed().as_millis() as u64,
-            });
-        }
-        results
-    }
 }
 
 pub struct ProxyResponse {
     pub data: Bytes,
     pub content_type: String,
-    pub latency_ms: u64,
-}
-
-pub struct ModelHealth {
-    pub name: String,
-    pub status: String,
     pub latency_ms: u64,
 }
