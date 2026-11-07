@@ -39,6 +39,28 @@ contract InferenceBSMTest is Test {
         bsm.configureModel("voice","tts",InferenceBSM.PricingUnit.Per1KCharacters,0,0);
         assertEq(bsm.getOperators().length,0);
     }
+    function test_operatorsCannotRateThemselvesOrEachOther() public {
+        address other = address(0x2222);
+        bsm.onRegister(operator,payload(24000)); bsm.onRegister(other,payload(24000));
+        vm.prank(operator); vm.expectRevert(); bsm.submitMetrics(other,0,0,1000,1000);
+        vm.prank(operator); vm.expectRevert(); bsm.submitMetrics(operator,10000,0,1000,0);
+        address collector = address(0xc011);
+        bsm.setPermittedCaller(collector,true);
+        vm.prank(collector); bsm.submitMetrics(other,9999,1,1000,0);
+    }
+    function test_onlyAutoSuspensionIsSelfLiftable() public {
+        address collector = address(0xc011);
+        bsm.setPermittedCaller(collector,true); bsm.setSlashingEnabled(true);
+        bsm.onRegister(operator,payload(24000));
+        bsm.setOperatorSuspended(operator,true,"admin");
+        vm.prank(collector); bsm.submitMetrics(operator,10000,1,1000,0);
+        vm.prank(operator); vm.expectRevert(); bsm.reactivate();
+        bsm.setOperatorSuspended(operator,false,"admin");
+        vm.prank(collector); bsm.submitMetrics(operator,5000,1,1000,500);
+        vm.prank(operator); vm.expectRevert(); bsm.reactivate();
+        vm.prank(collector); bsm.submitMetrics(operator,10000,1,1000,0);
+        vm.prank(operator); bsm.reactivate();
+    }
     function test_foreignFirstBindCannotClaimManager() public {
         InferenceBSM fresh = new InferenceBSM(address(0xbeef),address(this),address(this));
         vm.prank(attacker); vm.expectRevert(); fresh.onBlueprintCreated(999,attacker,attacker);
