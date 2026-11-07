@@ -67,12 +67,15 @@ contract InferenceBSM is BlueprintServiceManagerBase {
     mapping(bytes32 => ModelConfig) public modelConfigs;
     EnumerableSet.AddressSet private _operatorSet;
     mapping(address => bool) public permittedCallers;
+    /// Only a suspension from low reported uptime may be lifted by the operator itself.
+    mapping(address => bool) public autoSuspended;
     modifier onlyAdmin() {
         if (msg.sender != admin && msg.sender != blueprintOwner) revert NotAdmin(msg.sender);
         _;
     }
-    modifier onlyPermittedOrOperator(address operator) {
-        if (msg.sender != operator && !permittedCallers[msg.sender] && msg.sender != admin) {
+    /// Metrics come from admin-registered collectors, never from the operator they rate.
+    modifier onlyMetricsAuthority() {
+        if (!permittedCallers[msg.sender] && msg.sender != admin) {
             revert NotPermittedCaller(msg.sender);
         }
         _;
@@ -122,6 +125,7 @@ contract InferenceBSM is BlueprintServiceManagerBase {
     function setOperatorSuspended(address operator, bool suspended, string calldata reason) external onlyAdmin {
         if (!operators[operator].active) revert OperatorNotRegistered(operator);
         operators[operator].suspended = suspended;
+        autoSuspended[operator] = false;
         emit OperatorStatusChanged(operator, suspended, reason);
     }
 
@@ -131,7 +135,7 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         uint256 avgLatencyMs,
         uint64 requestsTotal,
         uint64 requestsError
-    ) external onlyPermittedOrOperator(operator) {
+    ) external onlyMetricsAuthority {
         OperatorInfo storage op = operators[operator];
         if (!op.active) revert OperatorNotRegistered(operator);
         op.uptimeBps = uptimeBps;
@@ -142,6 +146,7 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         emit MetricsSubmitted(operator, uptimeBps, avgLatencyMs, requestsTotal);
         if (slashingEnabled && uptimeBps < MIN_UPTIME_BPS && requestsTotal > 100 && !op.suspended) {
             op.suspended = true;
+            autoSuspended[operator] = true;
             emit OperatorStatusChanged(operator, true, "Auto-suspended: uptime below 90%");
         }
     }
@@ -166,6 +171,7 @@ contract InferenceBSM is BlueprintServiceManagerBase {
             _slashState.config.disputeWindow
         );
         operators[operator].suspended = true;
+        autoSuspended[operator] = false;
         emit OperatorStatusChanged(operator, true, "Performance slash proposed");
     }
 
@@ -174,12 +180,7 @@ contract InferenceBSM is BlueprintServiceManagerBase {
         SlashingLib.markExecuted(_slashProposals, slashId, 0);
     }
 
-    /// @notice Dispute a pending slash proposal.
-    /// @dev This BSM does not require a dispute bond (config.disputeBond == 0).
-    ///      The function is intentionally non-payable so any accidental ETH
-    ///      transfer reverts at the EVM level. If bonded disputes are later
-    ///      desired, add an admin setter for `disputeBond` and convert this
-    ///      function to `payable`, forwarding `msg.value` as `bondPosted`.
+    /// @notice Dispute a pending slash proposal; unbonded, so non-payable (ETH sent here reverts).
     function disputeSlash(uint64 slashId, string calldata reason) external {
         SlashingLib.disputeSlash(_slashProposals, _slashState.config, slashId, msg.sender, reason, 0);
     }
@@ -195,9 +196,10 @@ contract InferenceBSM is BlueprintServiceManagerBase {
 
     function reactivate() external {
         OperatorInfo storage op = operators[msg.sender];
-        if (!op.active) revert OperatorNotRegistered(msg.sender);
+        if (!op.active || !autoSuspended[msg.sender]) revert NotPermittedCaller(msg.sender);
         if (op.uptimeBps < MIN_UPTIME_BPS) revert UptimeBelowThreshold(op.uptimeBps, MIN_UPTIME_BPS);
         op.suspended = false;
+        autoSuspended[msg.sender] = false;
         emit OperatorStatusChanged(msg.sender, false, "Self-reactivated");
     }
 
@@ -231,14 +233,12 @@ contract InferenceBSM is BlueprintServiceManagerBase {
             lastMetricsBlock: uint64(block.number)
         });
         _operatorSet.add(operator);
-        permittedCallers[operator] = true;
         emit OperatorRegistered(operator, models, gpuVramMib, endpoint);
     }
 
     function onUnregister(address operator) external override onlyFromTangle {
         operators[operator].active = false;
         _operatorSet.remove(operator);
-        permittedCallers[operator] = false;
     }
 
     function onUpdatePreferences(address operator, bytes calldata newPreferences)
