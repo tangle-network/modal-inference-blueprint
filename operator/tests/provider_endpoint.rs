@@ -1,7 +1,8 @@
-//! The packaged config boots the real CLI and proxies a request to a provider endpoint.
+//! The packaged config boots the real CLI and proxies a request to a provider endpoint
+//! with Modal's proxy-auth headers, and refuses to start without the proxy-auth token.
 use std::{process::Stdio, time::Duration};
 use wiremock::{
-    matchers::{method, path},
+    matchers::{header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 
@@ -15,6 +16,8 @@ async fn example_config_boots_cli_and_serves_provider_endpoint() {
         .await;
     Mock::given(method("POST"))
         .and(path("/synthesize"))
+        .and(header("Modal-Key", "proxy-token-id"))
+        .and(header("Modal-Secret", "proxy-token-secret"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "audio/wav")
@@ -45,6 +48,8 @@ async fn example_config_boots_cli_and_serves_provider_endpoint() {
                 key_variable,
                 "0x0000000000000000000000000000000000000000000000000000000000000001",
             )
+            .env("MODAL_PROXY_TOKEN_ID", "proxy-token-id")
+            .env("MODAL_PROXY_TOKEN_SECRET", "proxy-token-secret")
             .env("RUST_LOG", "error")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -82,4 +87,24 @@ async fn example_config_boots_cli_and_serves_provider_endpoint() {
         assert_eq!(&response.bytes().await.unwrap()[..], b"RIFFprovider-audio");
         process.kill().await.unwrap();
     }
+    let temporary = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temporary.path().join("config")).unwrap();
+    std::fs::write(
+        temporary.path().join("config/operator.toml"),
+        include_str!("../../config/example.toml"),
+    )
+    .unwrap();
+    let refused = tokio::process::Command::new(env!("CARGO_BIN_EXE_standalone"))
+        .current_dir(temporary.path())
+        .env(
+            "MODAL_OP__TANGLE__OPERATOR_KEY",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .env_remove("MODAL_PROXY_TOKEN_ID")
+        .env_remove("MODAL_PROXY_TOKEN_SECRET")
+        .output()
+        .await
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("needs MODAL_PROXY_TOKEN_ID"));
 }
