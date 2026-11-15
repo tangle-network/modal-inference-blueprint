@@ -77,7 +77,17 @@ pub struct ModelEndpoint {
 
     #[serde(default)]
     pub inference_path: Option<String>,
+
+    /// The endpoint is a Modal web endpoint deployed with `requires_proxy_auth`.
+    #[serde(default)]
+    pub requires_proxy_auth: bool,
 }
+
+/// Modal's proxy-auth headers and the environment variables that hold their values.
+pub const MODAL_PROXY_AUTH: [(&str, &str); 2] = [
+    ("Modal-Key", "MODAL_PROXY_TOKEN_ID"),
+    ("Modal-Secret", "MODAL_PROXY_TOKEN_SECRET"),
+];
 
 fn default_health_path() -> String {
     "/health".to_string()
@@ -153,6 +163,15 @@ impl OperatorConfig {
                 "billing_required needs a nonzero price for model {}",
                 model.name
             );
+        }
+        for model in m.models.iter().filter(|model| model.requires_proxy_auth) {
+            for (_, variable) in MODAL_PROXY_AUTH {
+                anyhow::ensure!(
+                    std::env::var(variable).is_ok_and(|value| !value.is_empty()),
+                    "requires_proxy_auth on model {} needs {variable}",
+                    model.name
+                );
+            }
         }
         Ok(cfg)
     }

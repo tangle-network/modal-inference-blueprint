@@ -3,7 +3,7 @@
 //! This is the core of the blueprint: a secure, metered proxy that sits between
 //! the Tangle Gateway and the operator's Modal-hosted models.
 
-use crate::config::ModelEndpoint;
+use crate::config::{ModelEndpoint, MODAL_PROXY_AUTH};
 use anyhow::Result;
 use bytes::Bytes;
 use reqwest::Client;
@@ -78,13 +78,13 @@ impl ModelRegistry {
         let mut guard = RequestGuard::new(model_name);
         let start = Instant::now();
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Content-Type", content_type)
-            .body(body)
-            .send()
-            .await?;
+        let mut request = self.client.post(&url).header("Content-Type", content_type);
+        if model.requires_proxy_auth {
+            for (header, variable) in MODAL_PROXY_AUTH {
+                request = request.header(header, std::env::var(variable).unwrap_or_default());
+            }
+        }
+        let response = request.body(body).send().await?;
 
         let status = response.status();
         let latency_ms = start.elapsed().as_millis() as u64;

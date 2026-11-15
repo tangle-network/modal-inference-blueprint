@@ -22,6 +22,8 @@ type = "tts"
 modal_endpoint = "https://allocated-endpoint.example.com"
 health_path = "/health"
 inference_path = "/synthesize"
+# Deploy Modal endpoints with requires_proxy_auth; set MODAL_PROXY_TOKEN_ID and MODAL_PROXY_TOKEN_SECRET.
+requires_proxy_auth = true
 
 # Set from the SDK lease hardware receipt before chain registration.
 [gpu]
